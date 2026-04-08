@@ -1,14 +1,10 @@
 package com.example.screentranslator
 
-import android.content.ComponentName
-import android.content.Context
 import android.content.Intent
-import android.content.ServiceConnection
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.IBinder
 import android.provider.Settings
 import android.widget.ArrayAdapter
 import android.widget.Toast
@@ -25,8 +21,6 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private var mediaProjectionManager: MediaProjectionManager? = null
-    private var screenTranslatorService: ScreenTranslatorService? = null
-    private var isBound = false
 
     private val supportedLanguages = listOf(
         "en" to "English",
@@ -47,6 +41,7 @@ class MainActivity : AppCompatActivity() {
             startScreenCapture()
         } else {
             Toast.makeText(this, "দয়া করে Display over other apps পারমিশন দিন!", Toast.LENGTH_LONG).show()
+            binding.toggleStartStop.isChecked = false
         }
     }
 
@@ -55,8 +50,8 @@ class MainActivity : AppCompatActivity() {
     ) { result ->
         if (result.resultCode == RESULT_OK && result.data != null) {
             val mediaProjection = mediaProjectionManager?.getMediaProjection(result.resultCode, result.data!!)
-            if (mediaProjection != null && isBound && screenTranslatorService != null) {
-                screenTranslatorService?.setMediaProjection(mediaProjection)
+            if (mediaProjection != null) {
+                ScreenTranslatorService.setMediaProjectionInstance(mediaProjection)
                 startServiceAndFloatingIcon()
             } else {
                 Toast.makeText(this, "স্ক্রিন রেকর্ড পারমিশন দেওয়া হয়নি!", Toast.LENGTH_SHORT).show()
@@ -65,19 +60,6 @@ class MainActivity : AppCompatActivity() {
         } else {
             Toast.makeText(this, "ক্যানসেল করা হয়েছে!", Toast.LENGTH_SHORT).show()
             binding.toggleStartStop.isChecked = false
-        }
-    }
-
-    private val serviceConnection = object : ServiceConnection {
-        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-            val binder = service as ScreenTranslatorService.LocalBinder
-            screenTranslatorService = binder.getService()
-            isBound = true
-        }
-
-        override fun onServiceDisconnected(name: ComponentName?) {
-            screenTranslatorService = null
-            isBound = false
         }
     }
 
@@ -90,9 +72,6 @@ class MainActivity : AppCompatActivity() {
 
         setupLanguageSpinners()
         setupButtons()
-
-        val serviceIntent = Intent(this, ScreenTranslatorService::class.java)
-        bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
     }
 
     private fun setupLanguageSpinners() {
@@ -102,7 +81,6 @@ class MainActivity : AppCompatActivity() {
         binding.spinnerSource.adapter = adapter
         binding.spinnerTarget.adapter = adapter
 
-        // Default: English to Bengali
         binding.spinnerSource.setSelection(0)
         binding.spinnerTarget.setSelection(1)
     }
@@ -133,7 +111,7 @@ class MainActivity : AppCompatActivity() {
         val language = TranslateLanguage.fromLanguageTag(langCode) ?: return
         val modelManager = RemoteModelManager.getInstance()
         val model = TranslateRemoteModel.Builder(language).build()
-        Toast.makeText(this, "$langCode ভাষা ডাউনলোড হচ্ছে, দয়া করে অপেক্ষা করুন...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "$langCode ভাষা ডাউনলোড হচ্ছে...", Toast.LENGTH_SHORT).show()
         modelManager.download(model, DownloadConditions.Builder().build())
             .addOnSuccessListener { Toast.makeText(this, "$langCode ডাউনলোড সফল হয়েছে!", Toast.LENGTH_SHORT).show() }
             .addOnFailureListener { Toast.makeText(this, "$langCode ডাউনলোড ফেইল হয়েছে!", Toast.LENGTH_SHORT).show() }
@@ -162,16 +140,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun stopTranslationService() {
-        screenTranslatorService?.stopServiceAndCleanup()
         val intent = Intent(this, ScreenTranslatorService::class.java)
         stopService(intent)
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        if (isBound) {
-            unbindService(serviceConnection)
-            isBound = false
-        }
     }
 }
