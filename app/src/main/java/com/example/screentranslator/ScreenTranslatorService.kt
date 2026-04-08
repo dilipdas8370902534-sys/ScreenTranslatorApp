@@ -3,13 +3,13 @@ package com.example.screentranslator
 import android.app.*
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.*
 import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
 import android.media.projection.MediaProjection
-import android.os.Binder
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -20,10 +20,7 @@ import android.view.*
 import android.widget.*
 import androidx.core.app.NotificationCompat
 
-import com.google.mlkit.common.model.DownloadConditions
-import com.google.mlkit.common.model.RemoteModelManager
 import com.google.mlkit.nl.translate.TranslateLanguage
-import com.google.mlkit.nl.translate.TranslateRemoteModel
 import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.Translator
 import com.google.mlkit.nl.translate.TranslatorOptions
@@ -58,35 +55,51 @@ class ScreenTranslatorService : Service() {
     companion object {
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "screen_translator_channel"
+        private var mediaProjectionInstance: MediaProjection? = null
+
+        fun setMediaProjectionInstance(projection: MediaProjection) {
+            mediaProjectionInstance = projection
+        }
     }
 
-    inner class LocalBinder : Binder() {
-        fun getService(): ScreenTranslatorService = this@ScreenTranslatorService
-    }
-
-    private val binder = LocalBinder()
-
-    override fun onBind(intent: Intent?): IBinder = binder
+    override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildNotification())
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == "STOP_SERVICE") {
+            stopServiceAndCleanup()
+            return START_NOT_STICKY
+        }
+
         intent?.let {
             sourceLangCode = it.getStringExtra("SOURCE_LANG") ?: "en"
             targetLangCode = it.getStringExtra("TARGET_LANG") ?: "bn"
             setupTranslator()
         }
-        return START_STICKY
-    }
 
-    fun setMediaProjection(projection: MediaProjection) {
-        this.mediaProjection = projection
-        showFloatingIcon()
+        mediaProjectionInstance?.let {
+            mediaProjection = it
+            mediaProjectionInstance = null
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        } else {
+            startForeground(NOTIFICATION_ID, buildNotification())
+        }
+
+        if (mediaProjection != null) {
+            showFloatingIcon()
+        } else {
+            stopSelf()
+        }
+
+        return START_NOT_STICKY
     }
 
     private fun setupTranslator() {
@@ -106,7 +119,7 @@ class ScreenTranslatorService : Service() {
 
         val shape = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
-            setColor(Color.RED) // বড় লাল রঙের আইকন
+            setColor(Color.RED)
             setStroke(5, Color.WHITE)
         }
 
@@ -122,8 +135,8 @@ class ScreenTranslatorService : Service() {
         windowManager.defaultDisplay.getMetrics(metrics)
 
         floatingParams = WindowManager.LayoutParams(
-            180, // বড় সাইজ
-            180, // বড় সাইজ
+            180,
+            180,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else
@@ -165,7 +178,6 @@ class ScreenTranslatorService : Service() {
                 }
                 MotionEvent.ACTION_UP -> {
                     if (!isMoved) {
-                        // এক ক্লিকে অনুবাদ শুরু
                         startScreenCapture()
                     }
                     true
@@ -179,16 +191,11 @@ class ScreenTranslatorService : Service() {
 
     private fun startScreenCapture() {
         if (isCapturing) return
-        if (mediaProjection == null) {
-            Toast.makeText(this, "MediaProjection not ready", Toast.LENGTH_SHORT).show()
-            return
-        }
+        if (mediaProjection == null) return
+        
         isCapturing = true
         Toast.makeText(this, "অনুবাদ হচ্ছে...", Toast.LENGTH_SHORT).show()
-        captureScreenAndProcess()
-    }
-
-    private fun captureScreenAndProcess() {
+        
         val metrics = DisplayMetrics()
         windowManager.defaultDisplay.getMetrics(metrics)
         val width = metrics.widthPixels
@@ -297,7 +304,7 @@ class ScreenTranslatorService : Service() {
             val textView = TextView(this).apply {
                 text = translatedText
                 setTextColor(Color.WHITE)
-                setBackgroundColor(Color.parseColor("#E6000000")) // গাড় কালো ব্যাকগ্রাউন্ড
+                setBackgroundColor(Color.parseColor("#E6000000"))
                 gravity = Gravity.CENTER
                 setPadding(12, 12, 12, 12)
                 val width = rect.width()
@@ -363,9 +370,7 @@ class ScreenTranslatorService : Service() {
                 CHANNEL_ID,
                 "Screen Translator Service",
                 NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "Shows floating translation icon"
-            }
+            )
             val notificationManager = getSystemService(NotificationManager::class.java)
             notificationManager.createNotificationChannel(channel)
         }
