@@ -18,6 +18,9 @@ import android.os.Looper
 import android.util.DisplayMetrics
 import android.util.TypedValue
 import android.view.*
+import android.view.animation.Animation
+import android.view.animation.LinearInterpolator
+import android.view.animation.RotateAnimation
 import android.widget.*
 import androidx.core.app.NotificationCompat
 
@@ -72,14 +75,12 @@ class ScreenTranslatorService : Service() {
             return START_NOT_STICKY
         }
 
-        // ১. আগে সার্ভিসটা নোটিফিকেশনে চালু করতে হবে (Android 14 এর নিয়ম)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
         } else {
             startForeground(NOTIFICATION_ID, buildNotification())
         }
 
-        // ২. এরপর ডাটা নিয়ে কাজ শুরু করতে হবে
         intent?.let {
             sourceLangCode = it.getStringExtra("SOURCE_LANG") ?: "en"
             targetLangCode = it.getStringExtra("TARGET_LANG") ?: "bn"
@@ -196,83 +197,151 @@ class ScreenTranslatorService : Service() {
         windowManager.addView(floatingView, floatingParams)
     }
 
-    private fun startScreenCapture() {
-        if (isCapturing) return
-        if (mediaProjection == null) return
-        
-        isCapturing = true
-        Toast.makeText(this, "অনুবাদ হচ্ছে...", Toast.LENGTH_SHORT).show()
-        
-        val metrics = DisplayMetrics()
-        @Suppress("DEPRECATION")
-        windowManager.defaultDisplay.getMetrics(metrics)
-        val width = metrics.widthPixels
-        val height = metrics.heightPixels
-        val density = metrics.densityDpi
-
-        imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
-        virtualDisplay = mediaProjection?.createVirtualDisplay(
-            "ScreenCapture",
-            width, height, density,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            imageReader?.surface, null, null
-        )
-
-        imageReader?.setOnImageAvailableListener({ reader ->
-            val image = reader.acquireLatestImage()
-            if (image != null) {
-                val bitmap = imageToBitmap(image)
-                image.close()
-                processBitmap(bitmap)
+    private fun startLoadingAnimation() {
+        mainHandler.post {
+            val rotate = RotateAnimation(
+                0f, 360f,
+                Animation.RELATIVE_TO_SELF, 0.5f,
+                Animation.RELATIVE_TO_SELF, 0.5f
+            ).apply {
+                duration = 1000
+                repeatCount = Animation.INFINITE
+                interpolator = LinearInterpolator()
             }
-            stopCapture()
-        }, mainHandler)
+            floatingView?.startAnimation(rotate)
+        }
     }
 
-    private fun imageToBitmap(image: android.media.Image): Bitmap {
-        val planes = image.planes
-        val buffer = planes[0].buffer
-        val pixelStride = planes[0].pixelStride
-        val rowStride = planes[0].rowStride
-        val rowPadding = rowStride - pixelStride * image.width
-        val bitmap = Bitmap.createBitmap(
-            image.width + rowPadding / pixelStride,
-            image.height,
-            Bitmap.Config.ARGB_8888
-        )
-        bitmap.copyPixelsFromBuffer(buffer)
-        return Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height)
+    private fun stopLoadingAnimation() {
+        mainHandler.post {
+            floatingView?.clearAnimation()
+        }
+    }
+
+    private fun startScreenCapture() {
+        if (isCapturing) return
+        if (mediaProjection == null) {
+            Toast.makeText(this, "স্ক্রিন রেকর্ড পারমিশন নেই!", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        isCapturing = true
+        startLoadingAnimation() // গোল হয়ে ঘোরা শুরু হবে
+        
+        try {
+            val metrics = DisplayMetrics()
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.getRealMetrics(metrics)
+            val width = metrics.widthPixels
+            val height = metrics.heightPixels
+            val density = metrics.densityDpi
+
+            imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+            virtualDisplay = mediaProjection?.createVirtualDisplay(
+                "ScreenCapture",
+                width, height, density,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                imageReader?.surface, null, null
+            )
+
+            imageReader?.setOnImageAvailableListener({ reader ->
+                try {
+                    val image = reader.acquireLatestImage()
+                    if (image != null) {
+                        val bitmap = imageToBitmap(image)
+                        image.close()
+                        if (bitmap != null) {
+                            processBitmap(bitmap)
+                        } else {
+                            resetCapture()
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    resetCapture()
+                } finally {
+                    stopCapture()
+                }
+            }, mainHandler)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Toast.makeText(this, "স্ক্রিনশট এরর: ${e.message}", Toast.LENGTH_SHORT).show()
+            resetCapture()
+        }
+    }
+
+    private fun resetCapture() {
+        isCapturing = false
+        stopLoadingAnimation() // ঘোরা বন্ধ হবে
+    }
+
+    private fun imageToBitmap(image: android.media.Image): Bitmap? {
+        return try {
+            val planes = image.planes
+            val buffer = planes[0].buffer
+            val pixelStride = planes[0].pixelStride
+            val rowStride = planes[0].rowStride
+            val rowPadding = rowStride - pixelStride * image.width
+
+            val bmpWidth = image.width + rowPadding / pixelStride
+            val bmpHeight = image.height
+
+            val bitmap = Bitmap.createBitmap(bmpWidth, bmpHeight, Bitmap.Config.ARGB_8888)
+            buffer.rewind()
+            bitmap.copyPixelsFromBuffer(buffer)
+
+            val croppedBitmap = Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height)
+            if (bitmap != croppedBitmap) {
+                bitmap.recycle() // মেমোরি বাঁচানোর জন্য ক্র্যাশ রোধ করবে
+            }
+            croppedBitmap
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
     }
 
     private fun processBitmap(bitmap: Bitmap) {
-        val inputImage = InputImage.fromBitmap(bitmap, 0)
-        textRecognizer.process(inputImage)
-            .addOnSuccessListener { text ->
-                val textBlocks = text.textBlocks
-                if (textBlocks.isEmpty()) {
-                    Toast.makeText(this, "স্ক্রিনে কোনো লেখা পাওয়া যায়নি!", Toast.LENGTH_SHORT).show()
-                    return@addOnSuccessListener
-                }
+        try {
+            val inputImage = InputImage.fromBitmap(bitmap, 0)
+            textRecognizer.process(inputImage)
+                .addOnSuccessListener { text ->
+                    val textBlocks = text.textBlocks
+                    if (textBlocks.isEmpty()) {
+                        Toast.makeText(this, "স্ক্রিনে কোনো লেখা পাওয়া যায়নি!", Toast.LENGTH_SHORT).show()
+                        bitmap.recycle()
+                        resetCapture()
+                        return@addOnSuccessListener
+                    }
 
-                backgroundScope.launch {
-                    val translatedBlocks = mutableListOf<Pair<Rect, String>>()
-                    for (block in textBlocks) {
-                        val boundingBox = block.boundingBox ?: continue
-                        val originalText = block.text
-                        val translated = translateText(originalText)
-                        if (translated != null) {
-                            translatedBlocks.add(boundingBox to translated)
+                    backgroundScope.launch {
+                        val translatedBlocks = mutableListOf<Pair<Rect, String>>()
+                        for (block in textBlocks) {
+                            val boundingBox = block.boundingBox ?: continue
+                            val originalText = block.text
+                            val translated = translateText(originalText)
+                            if (translated != null) {
+                                translatedBlocks.add(boundingBox to translated)
+                            }
+                        }
+
+                        withContext(Dispatchers.Main) {
+                            showOverlays(translatedBlocks)
+                            bitmap.recycle() // কাজ শেষ, মেমোরি ফাঁকা
+                            resetCapture()
                         }
                     }
-
-                    withContext(Dispatchers.Main) {
-                        showOverlays(translatedBlocks)
-                    }
                 }
-            }
-            .addOnFailureListener {
-                Toast.makeText(this, "স্ক্যান করতে সমস্যা হয়েছে!", Toast.LENGTH_SHORT).show()
-            }
+                .addOnFailureListener { e ->
+                    Toast.makeText(this, "স্ক্যান ফেইল: ${e.message}", Toast.LENGTH_SHORT).show()
+                    bitmap.recycle()
+                    resetCapture()
+                }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            bitmap.recycle()
+            resetCapture()
+        }
     }
 
     private suspend fun translateText(text: String): String? {
@@ -312,7 +381,7 @@ class ScreenTranslatorService : Service() {
             val textView = TextView(this).apply {
                 text = translatedText
                 setTextColor(Color.WHITE)
-                setBackgroundColor(Color.parseColor("#E6000000"))
+                setBackgroundColor(Color.parseColor("#CC000000")) // হাল্কা কালো ব্যাকগ্রাউন্ড
                 gravity = Gravity.CENTER
                 setPadding(12, 12, 12, 12)
                 val width = rect.width()
@@ -366,10 +435,9 @@ class ScreenTranslatorService : Service() {
 
     private fun stopCapture() {
         virtualDisplay?.release()
-        imageReader?.close()
         virtualDisplay = null
+        imageReader?.close()
         imageReader = null
-        isCapturing = false
     }
 
     private fun createNotificationChannel() {
