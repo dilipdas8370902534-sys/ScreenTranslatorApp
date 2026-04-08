@@ -30,18 +30,14 @@ class MainActivity : AppCompatActivity() {
 
     private val supportedLanguages = listOf(
         "en" to "English",
+        "bn" to "Bengali",
+        "hi" to "Hindi",
+        "zh" to "Chinese",
         "es" to "Spanish",
         "fr" to "French",
-        "de" to "German",
-        "it" to "Italian",
-        "pt" to "Portuguese",
-        "ru" to "Russian",
         "ja" to "Japanese",
-        "ko" to "Korean",
-        "zh" to "Chinese",
-        "ar" to "Arabic",
-        "hi" to "Hindi",
-        "bn" to "Bengali"
+        "ru" to "Russian",
+        "ar" to "Arabic"
     )
 
     private val overlayPermissionLauncher = registerForActivityResult(
@@ -50,7 +46,7 @@ class MainActivity : AppCompatActivity() {
         if (Settings.canDrawOverlays(this)) {
             startScreenCapture()
         } else {
-            Toast.makeText(this, "Overlay permission required", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "দয়া করে Display over other apps পারমিশন দিন!", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -63,10 +59,12 @@ class MainActivity : AppCompatActivity() {
                 screenTranslatorService?.setMediaProjection(mediaProjection)
                 startServiceAndFloatingIcon()
             } else {
-                Toast.makeText(this, "Failed to get MediaProjection", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "স্ক্রিন রেকর্ড পারমিশন দেওয়া হয়নি!", Toast.LENGTH_SHORT).show()
+                binding.toggleStartStop.isChecked = false
             }
         } else {
-            Toast.makeText(this, "Screen capture permission denied", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "ক্যানসেল করা হয়েছে!", Toast.LENGTH_SHORT).show()
+            binding.toggleStartStop.isChecked = false
         }
     }
 
@@ -91,8 +89,10 @@ class MainActivity : AppCompatActivity() {
         mediaProjectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
 
         setupLanguageSpinners()
-        setupStartStopButton()
-        preDownloadModels()
+        setupButtons()
+
+        val serviceIntent = Intent(this, ScreenTranslatorService::class.java)
+        bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
     }
 
     private fun setupLanguageSpinners() {
@@ -102,39 +102,47 @@ class MainActivity : AppCompatActivity() {
         binding.spinnerSource.adapter = adapter
         binding.spinnerTarget.adapter = adapter
 
-        binding.spinnerSource.setSelection(supportedLanguages.indexOfFirst { it.first == "en" })
-        binding.spinnerTarget.setSelection(supportedLanguages.indexOfFirst { it.first == "bn" })
+        // Default: English to Bengali
+        binding.spinnerSource.setSelection(0)
+        binding.spinnerTarget.setSelection(1)
     }
 
-    private fun setupStartStopButton() {
+    private fun setupButtons() {
+        binding.btnDownload.setOnClickListener {
+            val sourceCode = supportedLanguages[binding.spinnerSource.selectedItemPosition].first
+            val targetCode = supportedLanguages[binding.spinnerTarget.selectedItemPosition].first
+            downloadModel(sourceCode)
+            downloadModel(targetCode)
+        }
+
         binding.toggleStartStop.setOnCheckedChangeListener { _, isChecked ->
             if (isChecked) {
-                startTranslationService()
+                if (!Settings.canDrawOverlays(this)) {
+                    val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
+                    overlayPermissionLauncher.launch(intent)
+                } else {
+                    startScreenCapture()
+                }
             } else {
                 stopTranslationService()
             }
         }
     }
 
-    private fun startTranslationService() {
-        if (!Settings.canDrawOverlays(this)) {
-            requestOverlayPermission()
-            return
-        }
-        startScreenCapture()
-    }
-
-    private fun requestOverlayPermission() {
-        val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
-        overlayPermissionLauncher.launch(intent)
+    private fun downloadModel(langCode: String) {
+        val language = TranslateLanguage.fromLanguageTag(langCode) ?: return
+        val modelManager = RemoteModelManager.getInstance()
+        val model = TranslateRemoteModel.Builder(language).build()
+        Toast.makeText(this, "$langCode ভাষা ডাউনলোড হচ্ছে, দয়া করে অপেক্ষা করুন...", Toast.LENGTH_SHORT).show()
+        modelManager.download(model, DownloadConditions.Builder().build())
+            .addOnSuccessListener { Toast.makeText(this, "$langCode ডাউনলোড সফল হয়েছে!", Toast.LENGTH_SHORT).show() }
+            .addOnFailureListener { Toast.makeText(this, "$langCode ডাউনলোড ফেইল হয়েছে!", Toast.LENGTH_SHORT).show() }
     }
 
     private fun startScreenCapture() {
         val intent = mediaProjectionManager?.createScreenCaptureIntent()
         if (intent != null) {
             screenCaptureLauncher.launch(intent)
-        } else {
-            Toast.makeText(this, "MediaProjection not available", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -151,34 +159,12 @@ class MainActivity : AppCompatActivity() {
         } else {
             startService(serviceIntent)
         }
-        bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
-        binding.toggleStartStop.isChecked = true
     }
 
     private fun stopTranslationService() {
-        if (isBound) {
-            unbindService(serviceConnection)
-            isBound = false
-        }
         screenTranslatorService?.stopServiceAndCleanup()
-        screenTranslatorService = null
         val intent = Intent(this, ScreenTranslatorService::class.java)
         stopService(intent)
-        binding.toggleStartStop.isChecked = false
-    }
-
-    private fun preDownloadModels() {
-        val modelManager = RemoteModelManager.getInstance()
-        val uniqueLanguages = supportedLanguages.map { it.first }.distinct()
-        uniqueLanguages.forEach { langCode ->
-            val language = TranslateLanguage.fromLanguageTag(langCode)
-            if (language != null) {
-                val model = TranslateRemoteModel.Builder(language).build()
-                modelManager.download(model, DownloadConditions.Builder().build())
-                    .addOnSuccessListener { /* pre‑downloaded */ }
-                    .addOnFailureListener { /* will download on first use */ }
-            }
-        }
     }
 
     override fun onDestroy() {
