@@ -17,7 +17,7 @@
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Source Language"
+        android:text="Source Language (যে ভাষার লেখা)"
         android:textSize="16sp"
         android:layout_marginBottom="8dp"/>
 
@@ -30,7 +30,7 @@
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Target Language"
+        android:text="Target Language (যে ভাষায় অনুবাদ চান)"
         android:textSize="16sp"
         android:layout_marginBottom="8dp"/>
 
@@ -38,13 +38,20 @@
         android:id="@+id/spinnerTarget"
         android:layout_width="match_parent"
         android:layout_height="48dp"
+        android:layout_marginBottom="16dp"/>
+
+    <Button
+        android:id="@+id/btnDownload"
+        android:layout_width="match_parent"
+        android:layout_height="60dp"
+        android:text="Download Selected Languages"
         android:layout_marginBottom="32dp"/>
 
     <androidx.appcompat.widget.SwitchCompat
         android:id="@+id/toggleStartStop"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Start / Stop"
+        android:text="Start Floating Icon"
         android:textSize="18sp"
         android:padding="12dp"/>
 
