@@ -10,6 +10,7 @@ import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
 import android.media.projection.MediaProjection
+import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -55,11 +56,6 @@ class ScreenTranslatorService : Service() {
     companion object {
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "screen_translator_channel"
-        private var mediaProjectionInstance: MediaProjection? = null
-
-        fun setMediaProjectionInstance(projection: MediaProjection) {
-            mediaProjectionInstance = projection
-        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -76,21 +72,31 @@ class ScreenTranslatorService : Service() {
             return START_NOT_STICKY
         }
 
-        intent?.let {
-            sourceLangCode = it.getStringExtra("SOURCE_LANG") ?: "en"
-            targetLangCode = it.getStringExtra("TARGET_LANG") ?: "bn"
-            setupTranslator()
-        }
-
-        mediaProjectionInstance?.let {
-            mediaProjection = it
-            mediaProjectionInstance = null
-        }
-
+        // ১. আগে সার্ভিসটা নোটিফিকেশনে চালু করতে হবে (Android 14 এর নিয়ম)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
         } else {
             startForeground(NOTIFICATION_ID, buildNotification())
+        }
+
+        // ২. এরপর ডাটা নিয়ে কাজ শুরু করতে হবে
+        intent?.let {
+            sourceLangCode = it.getStringExtra("SOURCE_LANG") ?: "en"
+            targetLangCode = it.getStringExtra("TARGET_LANG") ?: "bn"
+            setupTranslator()
+
+            val resultCode = it.getIntExtra("RESULT_CODE", Activity.RESULT_CANCELED)
+            val dataIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                it.getParcelableExtra("DATA_INTENT", Intent::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                it.getParcelableExtra<Intent>("DATA_INTENT")
+            }
+
+            if (resultCode == Activity.RESULT_OK && dataIntent != null && mediaProjection == null) {
+                val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                mediaProjection = projectionManager.getMediaProjection(resultCode, dataIntent)
+            }
         }
 
         if (mediaProjection != null) {
@@ -132,6 +138,7 @@ class ScreenTranslatorService : Service() {
         }
 
         val metrics = DisplayMetrics()
+        @Suppress("DEPRECATION")
         windowManager.defaultDisplay.getMetrics(metrics)
 
         floatingParams = WindowManager.LayoutParams(
@@ -140,7 +147,7 @@ class ScreenTranslatorService : Service() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else
-                WindowManager.LayoutParams.TYPE_PHONE,
+                @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         ).apply {
@@ -197,6 +204,7 @@ class ScreenTranslatorService : Service() {
         Toast.makeText(this, "অনুবাদ হচ্ছে...", Toast.LENGTH_SHORT).show()
         
         val metrics = DisplayMetrics()
+        @Suppress("DEPRECATION")
         windowManager.defaultDisplay.getMetrics(metrics)
         val width = metrics.widthPixels
         val height = metrics.heightPixels
@@ -292,7 +300,7 @@ class ScreenTranslatorService : Service() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else
-                WindowManager.LayoutParams.TYPE_PHONE,
+                @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
