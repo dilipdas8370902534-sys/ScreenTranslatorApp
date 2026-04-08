@@ -1,5 +1,6 @@
 package com.example.screentranslator
 
+import android.app.Activity
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
@@ -48,17 +49,10 @@ class MainActivity : AppCompatActivity() {
     private val screenCaptureLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        if (result.resultCode == RESULT_OK && result.data != null) {
-            val mediaProjection = mediaProjectionManager?.getMediaProjection(result.resultCode, result.data!!)
-            if (mediaProjection != null) {
-                ScreenTranslatorService.setMediaProjectionInstance(mediaProjection)
-                startServiceAndFloatingIcon()
-            } else {
-                Toast.makeText(this, "স্ক্রিন রেকর্ড পারমিশন দেওয়া হয়নি!", Toast.LENGTH_SHORT).show()
-                binding.toggleStartStop.isChecked = false
-            }
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            startServiceAndFloatingIcon(result.resultCode, result.data!!)
         } else {
-            Toast.makeText(this, "ক্যানসেল করা হয়েছে!", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "স্ক্রিন রেকর্ড পারমিশন দেওয়া হয়নি!", Toast.LENGTH_SHORT).show()
             binding.toggleStartStop.isChecked = false
         }
     }
@@ -124,13 +118,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun startServiceAndFloatingIcon() {
+    private fun startServiceAndFloatingIcon(resultCode: Int, data: Intent) {
         val sourceCode = supportedLanguages[binding.spinnerSource.selectedItemPosition].first
         val targetCode = supportedLanguages[binding.spinnerTarget.selectedItemPosition].first
 
         val serviceIntent = Intent(this, ScreenTranslatorService::class.java).apply {
             putExtra("SOURCE_LANG", sourceCode)
             putExtra("TARGET_LANG", targetCode)
+            putExtra("RESULT_CODE", resultCode)
+            putExtra("DATA_INTENT", data)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(serviceIntent)
