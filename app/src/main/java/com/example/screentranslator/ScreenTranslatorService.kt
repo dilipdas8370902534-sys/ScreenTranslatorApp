@@ -4,6 +4,7 @@ import android.app.*
 import android.content.Context
 import android.content.Intent
 import android.graphics.*
+import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
@@ -36,7 +37,7 @@ import kotlin.math.abs
 class ScreenTranslatorService : Service() {
 
     private lateinit var windowManager: WindowManager
-    private lateinit var floatingView: ImageView
+    private var floatingView: ImageView? = null
     private var floatingParams: WindowManager.LayoutParams? = null
     private var fullscreenOverlayContainer: FrameLayout? = null
     private var mediaProjection: MediaProjection? = null
@@ -44,7 +45,7 @@ class ScreenTranslatorService : Service() {
     private var imageReader: ImageReader? = null
 
     private var sourceLangCode = "en"
-    private var targetLangCode = "es"
+    private var targetLangCode = "bn"
     private var translator: Translator? = null
     private val textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
@@ -57,11 +58,6 @@ class ScreenTranslatorService : Service() {
     companion object {
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "screen_translator_channel"
-        private var mediaProjectionInstance: MediaProjection? = null
-
-        fun setMediaProjectionInstance(projection: MediaProjection) {
-            mediaProjectionInstance = projection
-        }
     }
 
     inner class LocalBinder : Binder() {
@@ -80,28 +76,17 @@ class ScreenTranslatorService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == "STOP_SERVICE") {
-            stopServiceAndCleanup()
-            return START_NOT_STICKY
-        }
-
         intent?.let {
             sourceLangCode = it.getStringExtra("SOURCE_LANG") ?: "en"
-            targetLangCode = it.getStringExtra("TARGET_LANG") ?: "es"
+            targetLangCode = it.getStringExtra("TARGET_LANG") ?: "bn"
             setupTranslator()
         }
-
-        mediaProjectionInstance?.let {
-            mediaProjection = it
-            mediaProjectionInstance = null
-        }
-
-        showFloatingIcon()
         return START_STICKY
     }
 
     fun setMediaProjection(projection: MediaProjection) {
         this.mediaProjection = projection
+        showFloatingIcon()
     }
 
     private fun setupTranslator() {
@@ -113,36 +98,32 @@ class ScreenTranslatorService : Service() {
                 .setTargetLanguage(targetLang)
                 .build()
             translator = Translation.getClient(options)
-            checkAndDownloadModel(sourceLang, targetLang)
-        } else {
-            Toast.makeText(this, "Unsupported language pair", Toast.LENGTH_SHORT).show()
         }
-    }
-
-    private fun checkAndDownloadModel(source: String, target: String) {
-        val modelManager = RemoteModelManager.getInstance()
-        val model = TranslateRemoteModel.Builder(source).build()
-        modelManager.getDownloadedModels(TranslateRemoteModel::class.java)
-            .addOnSuccessListener { models ->
-                if (models.none { it.language == source }) {
-                    modelManager.download(model, DownloadConditions.Builder().build())
-                        .addOnFailureListener { /* will retry later */ }
-                }
-            }
     }
 
     private fun showFloatingIcon() {
+        if (floatingView != null) return
+
+        val shape = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(Color.RED) // বড় লাল রঙের আইকন
+            setStroke(5, Color.WHITE)
+        }
+
         floatingView = ImageView(this).apply {
             setImageResource(android.R.drawable.ic_menu_camera)
-            setPadding(16, 16, 16, 16)
             setColorFilter(Color.WHITE)
-            background = null
+            background = shape
+            setPadding(40, 40, 40, 40)
+            elevation = 10f
         }
+
         val metrics = DisplayMetrics()
         windowManager.defaultDisplay.getMetrics(metrics)
+
         floatingParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            180, // বড় সাইজ
+            180, // বড় সাইজ
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else
@@ -151,33 +132,40 @@ class ScreenTranslatorService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = metrics.widthPixels / 2
-            y = metrics.heightPixels / 2
+            x = 0
+            y = metrics.heightPixels / 3
         }
 
         var initialX = 0
         var initialY = 0
         var initialTouchX = 0f
         var initialTouchY = 0f
-        floatingView.setOnTouchListener { _, event ->
+        var isMoved = false
+
+        floatingView?.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     initialX = floatingParams!!.x
                     initialY = floatingParams!!.y
                     initialTouchX = event.rawX
                     initialTouchY = event.rawY
+                    isMoved = false
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    floatingParams!!.x = initialX + (event.rawX - initialTouchX).toInt()
-                    floatingParams!!.y = initialY + (event.rawY - initialTouchY).toInt()
-                    windowManager.updateViewLayout(floatingView, floatingParams)
+                    val deltaX = (event.rawX - initialTouchX).toInt()
+                    val deltaY = (event.rawY - initialTouchY).toInt()
+                    if (abs(deltaX) > 10 || abs(deltaY) > 10) {
+                        isMoved = true
+                        floatingParams!!.x = initialX + deltaX
+                        floatingParams!!.y = initialY + deltaY
+                        windowManager.updateViewLayout(floatingView, floatingParams)
+                    }
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    val deltaX = abs(event.rawX - initialTouchX)
-                    val deltaY = abs(event.rawY - initialTouchY)
-                    if (deltaX < 10 && deltaY < 10) {
+                    if (!isMoved) {
+                        // এক ক্লিকে অনুবাদ শুরু
                         startScreenCapture()
                     }
                     true
@@ -196,6 +184,7 @@ class ScreenTranslatorService : Service() {
             return
         }
         isCapturing = true
+        Toast.makeText(this, "অনুবাদ হচ্ছে...", Toast.LENGTH_SHORT).show()
         captureScreenAndProcess()
     }
 
@@ -246,7 +235,7 @@ class ScreenTranslatorService : Service() {
             .addOnSuccessListener { text ->
                 val textBlocks = text.textBlocks
                 if (textBlocks.isEmpty()) {
-                    Toast.makeText(this, "No text found", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "স্ক্রিনে কোনো লেখা পাওয়া যায়নি!", Toast.LENGTH_SHORT).show()
                     return@addOnSuccessListener
                 }
 
@@ -267,7 +256,7 @@ class ScreenTranslatorService : Service() {
                 }
             }
             .addOnFailureListener {
-                Toast.makeText(this, "Text recognition failed", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "স্ক্যান করতে সমস্যা হয়েছে!", Toast.LENGTH_SHORT).show()
             }
     }
 
@@ -308,9 +297,9 @@ class ScreenTranslatorService : Service() {
             val textView = TextView(this).apply {
                 text = translatedText
                 setTextColor(Color.WHITE)
-                setBackgroundColor(Color.parseColor("#AA000000"))
+                setBackgroundColor(Color.parseColor("#E6000000")) // গাড় কালো ব্যাকগ্রাউন্ড
                 gravity = Gravity.CENTER
-                setPadding(8, 8, 8, 8)
+                setPadding(12, 12, 12, 12)
                 val width = rect.width()
                 val height = rect.height()
                 if (width <= 0 || height <= 0) return@apply
@@ -331,7 +320,7 @@ class ScreenTranslatorService : Service() {
             View.MeasureSpec.makeMeasureSpec(maxHeight, View.MeasureSpec.AT_MOST)
         )
         var textSize = 50f
-        val minSize = 8f
+        val minSize = 10f
         var bestSize = minSize
 
         while (textSize >= minSize) {
@@ -403,10 +392,11 @@ class ScreenTranslatorService : Service() {
         clearOverlays()
         stopCapture()
         try {
-            if (::floatingView.isInitialized) {
-                windowManager.removeView(floatingView)
+            floatingView?.let {
+                windowManager.removeView(it)
             }
         } catch (e: Exception) { }
+        floatingView = null
         mediaProjection?.stop()
         mediaProjection = null
         translator?.close()
