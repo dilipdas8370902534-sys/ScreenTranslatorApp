@@ -16,14 +16,18 @@ import android.util.TypedValue
 import android.view.*
 import android.widget.*
 import androidx.core.app.NotificationCompat
+
+// গুগলের নতুন আপডেটেড ঠিকানা (অফিসিয়াল ডকুমেন্টেশন অনুযায়ী)
 import com.google.mlkit.common.model.DownloadConditions
 import com.google.mlkit.common.model.RemoteModelManager
-import com.google.mlkit.text.TextRecognition
-import com.google.mlkit.text.TextRecognizerOptions
-import com.google.mlkit.translate.TranslateLanguage
-import com.google.mlkit.translate.Translation
-import com.google.mlkit.translate.Translator
-import com.google.mlkit.translate.TranslatorOptions
+import com.google.mlkit.nl.translate.TranslateLanguage
+import com.google.mlkit.nl.translate.TranslateRemoteModel
+import com.google.mlkit.nl.translate.Translation
+import com.google.mlkit.nl.translate.Translator
+import com.google.mlkit.nl.translate.TranslatorOptions
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+
 import kotlinx.coroutines.*
 import kotlin.math.abs
 
@@ -74,20 +78,17 @@ class ScreenTranslatorService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Handle "STOP_SERVICE" action from notification
         if (intent?.action == "STOP_SERVICE") {
             stopServiceAndCleanup()
             return START_NOT_STICKY
         }
 
-        // Normal start: read language codes
         intent?.let {
             sourceLangCode = it.getStringExtra("SOURCE_LANG") ?: "en"
             targetLangCode = it.getStringExtra("TARGET_LANG") ?: "es"
             setupTranslator()
         }
 
-        // If MediaProjection was set via setMediaProjection, use it
         mediaProjectionInstance?.let {
             mediaProjection = it
             mediaProjectionInstance = null
@@ -116,11 +117,11 @@ class ScreenTranslatorService : Service() {
         }
     }
 
-    private fun checkAndDownloadModel(source: TranslateLanguage, target: TranslateLanguage) {
+    private fun checkAndDownloadModel(source: String, target: String) {
         val modelManager = RemoteModelManager.getInstance()
-        val model = com.google.mlkit.translate.TranslateRemoteModel.Builder(source).build()
-        modelManager.getDownloadedModels(com.google.mlkit.translate.TranslateRemoteModel::class.java)
-            .addOnSuccessListener { models ->
+        val model = TranslateRemoteModel.Builder(source).build()
+        modelManager.getDownloadedModels(TranslateRemoteModel::class.java)
+            .addOnSuccessListener { models: Set<TranslateRemoteModel> ->
                 if (models.none { it.language == source }) {
                     modelManager.download(model, DownloadConditions.Builder().build())
                         .addOnFailureListener { /* will retry later */ }
@@ -268,8 +269,8 @@ class ScreenTranslatorService : Service() {
         if (translator == null) return null
         return suspendCancellableCoroutine { cont ->
             translator?.translate(text)
-                ?.addOnSuccessListener { translated -> cont.resume(translated) {} }
-                ?.addOnFailureListener { cont.resume(null) {} }
+                ?.addOnSuccessListener { translated: String -> cont.resume(translated) {} }
+                ?.addOnFailureListener { e: Exception -> cont.resume(null) {} }
         }
     }
 
