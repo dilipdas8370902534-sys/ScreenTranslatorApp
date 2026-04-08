@@ -15,10 +15,12 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.example.screentranslator.databinding.ActivityMainBinding
+
+// গুগলের নতুন আপডেটেড ঠিকানা
 import com.google.mlkit.common.model.DownloadConditions
 import com.google.mlkit.common.model.RemoteModelManager
-import com.google.mlkit.translate.TranslateLanguage
-import com.google.mlkit.translate.TranslateRemoteModel
+import com.google.mlkit.nl.translate.TranslateLanguage
+import com.google.mlkit.nl.translate.TranslateRemoteModel
 
 class MainActivity : AppCompatActivity() {
 
@@ -39,7 +41,8 @@ class MainActivity : AppCompatActivity() {
         "ko" to "Korean",
         "zh" to "Chinese",
         "ar" to "Arabic",
-        "hi" to "Hindi"
+        "hi" to "Hindi",
+        "bn" to "Bengali"
     )
 
     private val overlayPermissionLauncher = registerForActivityResult(
@@ -101,7 +104,7 @@ class MainActivity : AppCompatActivity() {
         binding.spinnerTarget.adapter = adapter
 
         binding.spinnerSource.setSelection(supportedLanguages.indexOfFirst { it.first == "en" })
-        binding.spinnerTarget.setSelection(supportedLanguages.indexOfFirst { it.first == "es" })
+        binding.spinnerTarget.setSelection(supportedLanguages.indexOfFirst { it.first == "bn" })
     }
 
     private fun setupStartStopButton() {
