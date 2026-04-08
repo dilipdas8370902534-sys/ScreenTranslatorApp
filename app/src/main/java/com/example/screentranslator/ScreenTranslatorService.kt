@@ -61,6 +61,14 @@ class ScreenTranslatorService : Service() {
         private const val CHANNEL_ID = "screen_translator_channel"
     }
 
+    // Android 14 এর জন্য এই Callback টি খুব জরুরি
+    private val projectionCallback = object : MediaProjection.Callback() {
+        override fun onStop() {
+            super.onStop()
+            stopCapture()
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -97,6 +105,9 @@ class ScreenTranslatorService : Service() {
             if (resultCode == Activity.RESULT_OK && dataIntent != null && mediaProjection == null) {
                 val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                 mediaProjection = projectionManager.getMediaProjection(resultCode, dataIntent)
+                
+                // এই লাইনটিই সেই ম্যাজিক যা Android 14 এ পারমিশন এরর দূর করবে
+                mediaProjection?.registerCallback(projectionCallback, mainHandler)
             }
         }
 
@@ -226,7 +237,7 @@ class ScreenTranslatorService : Service() {
         }
         
         isCapturing = true
-        startLoadingAnimation() // গোল হয়ে ঘোরা শুরু হবে
+        startLoadingAnimation()
         
         try {
             val metrics = DisplayMetrics()
@@ -265,14 +276,14 @@ class ScreenTranslatorService : Service() {
             }, mainHandler)
         } catch (e: Exception) {
             e.printStackTrace()
-            Toast.makeText(this, "স্ক্রিনশট এরর: ${e.message}", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "স্ক্রিনশট এরর: ${e.message}", Toast.LENGTH_LONG).show()
             resetCapture()
         }
     }
 
     private fun resetCapture() {
         isCapturing = false
-        stopLoadingAnimation() // ঘোরা বন্ধ হবে
+        stopLoadingAnimation()
     }
 
     private fun imageToBitmap(image: android.media.Image): Bitmap? {
@@ -292,7 +303,7 @@ class ScreenTranslatorService : Service() {
 
             val croppedBitmap = Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height)
             if (bitmap != croppedBitmap) {
-                bitmap.recycle() // মেমোরি বাঁচানোর জন্য ক্র্যাশ রোধ করবে
+                bitmap.recycle()
             }
             croppedBitmap
         } catch (e: Exception) {
@@ -327,7 +338,7 @@ class ScreenTranslatorService : Service() {
 
                         withContext(Dispatchers.Main) {
                             showOverlays(translatedBlocks)
-                            bitmap.recycle() // কাজ শেষ, মেমোরি ফাঁকা
+                            bitmap.recycle()
                             resetCapture()
                         }
                     }
@@ -381,7 +392,7 @@ class ScreenTranslatorService : Service() {
             val textView = TextView(this).apply {
                 text = translatedText
                 setTextColor(Color.WHITE)
-                setBackgroundColor(Color.parseColor("#CC000000")) // হাল্কা কালো ব্যাকগ্রাউন্ড
+                setBackgroundColor(Color.parseColor("#CC000000"))
                 gravity = Gravity.CENTER
                 setPadding(12, 12, 12, 12)
                 val width = rect.width()
@@ -478,8 +489,11 @@ class ScreenTranslatorService : Service() {
             }
         } catch (e: Exception) { }
         floatingView = null
+        
+        mediaProjection?.unregisterCallback(projectionCallback)
         mediaProjection?.stop()
         mediaProjection = null
+        
         translator?.close()
         stopForeground(true)
         stopSelf()
