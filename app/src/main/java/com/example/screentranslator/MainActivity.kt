@@ -16,7 +16,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.example.screentranslator.databinding.ActivityMainBinding
 
-// গুগলের নতুন আপডেটেড ঠিকানা
 import com.google.mlkit.common.model.DownloadConditions
 import com.google.mlkit.common.model.RemoteModelManager
 import com.google.mlkit.nl.translate.TranslateLanguage
@@ -172,7 +171,7 @@ class MainActivity : AppCompatActivity() {
         val modelManager = RemoteModelManager.getInstance()
         val uniqueLanguages = supportedLanguages.map { it.first }.distinct()
         uniqueLanguages.forEach { langCode ->
-            val language = TranslateLanguage.fromLanguageCode(langCode)
+            val language = TranslateLanguage.fromLanguageTag(langCode)
             if (language != null) {
                 val model = TranslateRemoteModel.Builder(language).build()
                 modelManager.download(model, DownloadConditions.Builder().build())
