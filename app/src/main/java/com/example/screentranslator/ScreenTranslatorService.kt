@@ -8,7 +8,9 @@ import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
 import android.media.projection.MediaProjection
+import android.os.Binder
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.DisplayMetrics
@@ -17,7 +19,6 @@ import android.view.*
 import android.widget.*
 import androidx.core.app.NotificationCompat
 
-// গুগলের নতুন আপডেটেড ঠিকানা (অফিসিয়াল ডকুমেন্টেশন অনুযায়ী)
 import com.google.mlkit.common.model.DownloadConditions
 import com.google.mlkit.common.model.RemoteModelManager
 import com.google.mlkit.nl.translate.TranslateLanguage
@@ -25,6 +26,7 @@ import com.google.mlkit.nl.translate.TranslateRemoteModel
 import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.Translator
 import com.google.mlkit.nl.translate.TranslatorOptions
+import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 
@@ -103,8 +105,8 @@ class ScreenTranslatorService : Service() {
     }
 
     private fun setupTranslator() {
-        val sourceLang = TranslateLanguage.fromLanguageCode(sourceLangCode)
-        val targetLang = TranslateLanguage.fromLanguageCode(targetLangCode)
+        val sourceLang = TranslateLanguage.fromLanguageTag(sourceLangCode)
+        val targetLang = TranslateLanguage.fromLanguageTag(targetLangCode)
         if (sourceLang != null && targetLang != null) {
             val options = TranslatorOptions.Builder()
                 .setSourceLanguage(sourceLang)
@@ -121,7 +123,7 @@ class ScreenTranslatorService : Service() {
         val modelManager = RemoteModelManager.getInstance()
         val model = TranslateRemoteModel.Builder(source).build()
         modelManager.getDownloadedModels(TranslateRemoteModel::class.java)
-            .addOnSuccessListener { models: Set<TranslateRemoteModel> ->
+            .addOnSuccessListener { models ->
                 if (models.none { it.language == source }) {
                     modelManager.download(model, DownloadConditions.Builder().build())
                         .addOnFailureListener { /* will retry later */ }
@@ -217,9 +219,7 @@ class ScreenTranslatorService : Service() {
             if (image != null) {
                 val bitmap = imageToBitmap(image)
                 image.close()
-                backgroundScope.launch {
-                    processBitmap(bitmap)
-                }
+                processBitmap(bitmap)
             }
             stopCapture()
         }, mainHandler)
@@ -240,37 +240,43 @@ class ScreenTranslatorService : Service() {
         return Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height)
     }
 
-    private suspend fun processBitmap(bitmap: Bitmap) {
-        val result = textRecognizer.process(com.google.mlkit.vision.common.InputImage.fromBitmap(bitmap, 0))
-        val textBlocks = result.textBlocks
-        if (textBlocks.isEmpty()) {
-            withContext(Dispatchers.Main) {
-                Toast.makeText(this@ScreenTranslatorService, "No text found", Toast.LENGTH_SHORT).show()
-            }
-            return
-        }
+    private fun processBitmap(bitmap: Bitmap) {
+        val inputImage = InputImage.fromBitmap(bitmap, 0)
+        textRecognizer.process(inputImage)
+            .addOnSuccessListener { text ->
+                val textBlocks = text.textBlocks
+                if (textBlocks.isEmpty()) {
+                    Toast.makeText(this, "No text found", Toast.LENGTH_SHORT).show()
+                    return@addOnSuccessListener
+                }
 
-        val translatedBlocks = mutableListOf<Pair<Rect, String>>()
-        for (block in textBlocks) {
-            val boundingBox = block.boundingBox ?: continue
-            val originalText = block.text
-            val translated = translateText(originalText)
-            if (translated != null) {
-                translatedBlocks.add(boundingBox to translated)
-            }
-        }
+                backgroundScope.launch {
+                    val translatedBlocks = mutableListOf<Pair<Rect, String>>()
+                    for (block in textBlocks) {
+                        val boundingBox = block.boundingBox ?: continue
+                        val originalText = block.text
+                        val translated = translateText(originalText)
+                        if (translated != null) {
+                            translatedBlocks.add(boundingBox to translated)
+                        }
+                    }
 
-        withContext(Dispatchers.Main) {
-            showOverlays(translatedBlocks)
-        }
+                    withContext(Dispatchers.Main) {
+                        showOverlays(translatedBlocks)
+                    }
+                }
+            }
+            .addOnFailureListener {
+                Toast.makeText(this, "Text recognition failed", Toast.LENGTH_SHORT).show()
+            }
     }
 
     private suspend fun translateText(text: String): String? {
         if (translator == null) return null
         return suspendCancellableCoroutine { cont ->
             translator?.translate(text)
-                ?.addOnSuccessListener { translated: String -> cont.resume(translated) {} }
-                ?.addOnFailureListener { e: Exception -> cont.resume(null) {} }
+                ?.addOnSuccessListener { translated -> cont.resume(translated) {} }
+                ?.addOnFailureListener { cont.resume(null) {} }
         }
     }
 
