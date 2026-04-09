@@ -3,56 +3,72 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="24dp"
-    android:gravity="center">
+    android:padding="16dp">
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="Screen Translator"
-        android:textSize="28sp"
+        android:textSize="24sp"
         android:textStyle="bold"
-        android:layout_marginBottom="32dp"/>
-
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Source Language (যে ভাষার লেখা)"
-        android:textSize="16sp"
-        android:layout_marginBottom="8dp"/>
-
-    <Spinner
-        android:id="@+id/spinnerSource"
-        android:layout_width="match_parent"
-        android:layout_height="48dp"
-        android:layout_marginBottom="24dp"/>
-
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Target Language (যে ভাষায় অনুবাদ চান)"
-        android:textSize="16sp"
-        android:layout_marginBottom="8dp"/>
-
-    <Spinner
-        android:id="@+id/spinnerTarget"
-        android:layout_width="match_parent"
-        android:layout_height="48dp"
+        android:layout_gravity="center"
         android:layout_marginBottom="16dp"/>
 
-    <Button
-        android:id="@+id/btnDownload"
+    <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="60dp"
-        android:text="Download Selected Languages"
-        android:layout_marginBottom="32dp"/>
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginBottom="16dp">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:paddingEnd="8dp">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="From (যে ভাষার লেখা)"/>
+            <Spinner android:id="@+id/spinnerSource" android:layout_width="match_parent" android:layout_height="48dp"/>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:paddingStart="8dp">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="To (অনুবাদ হবে)"/>
+            <Spinner android:id="@+id/spinnerTarget" android:layout_width="match_parent" android:layout_height="48dp"/>
+        </LinearLayout>
+    </LinearLayout>
 
     <androidx.appcompat.widget.SwitchCompat
         android:id="@+id/toggleStartStop"
-        android:layout_width="wrap_content"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Start Floating Icon"
         android:textSize="18sp"
-        android:padding="12dp"/>
+        android:textStyle="bold"
+        android:padding="12dp"
+        android:layout_marginBottom="16dp"
+        android:background="#E0E0E0"/>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Language Packages (ম্যানেজ করুন)"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="8dp"/>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+        <LinearLayout
+            android:id="@+id/languageContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"/>
+    </ScrollView>
 
 </LinearLayout>
