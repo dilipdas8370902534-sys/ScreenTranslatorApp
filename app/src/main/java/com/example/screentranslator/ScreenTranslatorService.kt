@@ -125,7 +125,6 @@ class ScreenTranslatorService : Service() {
     }
 
     private fun setupTranslatorAndScanner() {
-        // Translation Setup
         val sourceLang = TranslateLanguage.fromLanguageTag(sourceLangCode)
         val targetLang = TranslateLanguage.fromLanguageTag(targetLangCode)
         if (sourceLang != null && targetLang != null) {
@@ -136,7 +135,6 @@ class ScreenTranslatorService : Service() {
             translator = Translation.getClient(options)
         }
 
-        // Scanner Setup (সঠিক ভাষার চশমা পরানো হচ্ছে)
         val recognizerOptions = when (sourceLangCode) {
             "zh" -> ChineseTextRecognizerOptions.Builder().build()
             "hi" -> DevanagariTextRecognizerOptions.Builder().build()
@@ -195,17 +193,16 @@ class ScreenTranslatorService : Service() {
     private fun showFloatingIcon() {
         if (floatingView != null) return
 
+        // নতুন ডিজাইন: মাঝখানে নীল, চারপাশে লাল বর্ডার
         val shape = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
-            setColor(Color.RED)
-            setStroke(5, Color.WHITE)
+            setColor(Color.BLUE) // মাঝখানে নীল
+            setStroke(15, Color.RED) // চারপাশে লাল রঙের বর্ডার
         }
 
         floatingView = ImageView(this).apply {
-            setImageResource(android.R.drawable.ic_menu_camera)
-            setColorFilter(Color.WHITE)
+            setImageDrawable(null) // ক্যামেরার আইকন সরিয়ে দেওয়া হলো
             background = shape
-            setPadding(40, 40, 40, 40)
             elevation = 10f
         }
 
@@ -214,8 +211,8 @@ class ScreenTranslatorService : Service() {
         windowManager.defaultDisplay.getMetrics(metrics)
 
         floatingParams = WindowManager.LayoutParams(
-            180,
-            180,
+            90, // সাইজ অর্ধেক করা হলো (১৮০ থেকে ৯০)
+            90, // সাইজ অর্ধেক করা হলো
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else
