@@ -1,6 +1,7 @@
 package com.example.screentranslator
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Color
 import android.media.projection.MediaProjectionManager
@@ -13,6 +14,7 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.example.screentranslator.databinding.ActivityMainBinding
@@ -71,6 +73,7 @@ class MainActivity : AppCompatActivity() {
         setupLanguageSpinners()
         setupLanguageList()
         setupToggle()
+        setupExitDialog()
     }
 
     private fun setupLanguageSpinners() {
@@ -180,5 +183,28 @@ class MainActivity : AppCompatActivity() {
         } else {
             startService(serviceIntent)
         }
+    }
+
+    // ব্যাক বাটনে ক্লিক করলে Exit অপশন দেখানোর ফাংশন
+    private fun setupExitDialog() {
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("অ্যাপ বন্ধ করবেন?")
+                    .setMessage("আপনি কি অ্যাপটি পুরোপুরি বন্ধ করতে চান? 'Exit' করলে ব্যাকগ্রাউন্ড সার্ভিস বন্ধ হয়ে RAM ও ব্যাটারি বাঁচবে।")
+                    .setPositiveButton("Exit") { _, _ ->
+                        // সার্ভিস পুরোপুরি বন্ধ করে RAM ক্লিয়ার করবে
+                        val intent = Intent(this@MainActivity, ScreenTranslatorService::class.java)
+                        stopService(intent)
+                        finishAffinity() 
+                    }
+                    .setNegativeButton("Non Exit") { _, _ ->
+                        // সার্ভিস চালু রেখে শুধু মিনিমাইজ করবে
+                        moveTaskToBack(true)
+                    }
+                    .setCancelable(true)
+                    .show()
+            }
+        })
     }
 }
