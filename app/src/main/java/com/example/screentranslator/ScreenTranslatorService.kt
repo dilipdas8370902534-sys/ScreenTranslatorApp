@@ -53,7 +53,7 @@ class ScreenTranslatorService : Service() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val backgroundScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    private var isCapturing = false
+    private var captureRequest = false // আনলিমিটেড ট্যাপের জন্য ম্যাজিক সুইচ
     private val currentOverlays = mutableListOf<TextView>()
 
     companion object {
@@ -64,7 +64,7 @@ class ScreenTranslatorService : Service() {
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
             super.onStop()
-            stopCapture()
+            releaseVirtualDisplay()
         }
     }
 
@@ -105,6 +105,9 @@ class ScreenTranslatorService : Service() {
                 val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                 mediaProjection = projectionManager.getMediaProjection(resultCode, dataIntent)
                 mediaProjection?.registerCallback(projectionCallback, mainHandler)
+                
+                // একবারই ডিসপ্লে রেডি করা হলো, যাতে আর ক্র্যাশ না করে
+                setupVirtualDisplay()
             }
         }
 
@@ -126,6 +129,44 @@ class ScreenTranslatorService : Service() {
                 .setTargetLanguage(targetLang)
                 .build()
             translator = Translation.getClient(options)
+        }
+    }
+
+    private fun setupVirtualDisplay() {
+        try {
+            val metrics = DisplayMetrics()
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.getRealMetrics(metrics) // একদম নিখুঁত মাপের জন্য
+            val width = metrics.widthPixels
+            val height = metrics.heightPixels
+            val density = metrics.densityDpi
+
+            imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+            virtualDisplay = mediaProjection?.createVirtualDisplay(
+                "ScreenCapture",
+                width, height, density,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                imageReader?.surface, null, null
+            )
+
+            imageReader?.setOnImageAvailableListener({ reader ->
+                val image = reader.acquireLatestImage()
+                if (image != null) {
+                    if (captureRequest) {
+                        captureRequest = false
+                        val bitmap = imageToBitmap(image)
+                        if (bitmap != null) {
+                            processBitmap(bitmap)
+                        } else {
+                            resetCapture()
+                        }
+                    }
+                    image.close() // মেমোরি বাঁচানো
+                }
+            }, mainHandler)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Toast.makeText(this, "ডিসপ্লে রেডি করতে এরর: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -194,8 +235,7 @@ class ScreenTranslatorService : Service() {
                 }
                 MotionEvent.ACTION_UP -> {
                     if (!isMoved) {
-                        clearOverlays() // আগের অনুবাদ মুছে স্ক্রিন রিফ্রেশ করবে
-                        startScreenCapture()
+                        triggerCapture() // যতবার ট্যাপ ততবার কাজ করবে
                     }
                     true
                 }
@@ -227,70 +267,24 @@ class ScreenTranslatorService : Service() {
         }
     }
 
-    private fun startScreenCapture() {
-        if (isCapturing) return
-        if (mediaProjection == null) {
+    private fun triggerCapture() {
+        if (mediaProjection == null || virtualDisplay == null) {
             Toast.makeText(this, "স্ক্রিন রেকর্ড পারমিশন নেই!", Toast.LENGTH_SHORT).show()
             return
         }
+        if (captureRequest) return // আগেরটা চলতে থাকলে অপেক্ষা করবে
         
-        isCapturing = true
+        clearOverlays() // আগের লেখা মুছে দেবে
         startLoadingAnimation()
         
-        // ২০০ মিলি-সেকেন্ড পর স্ক্যান শুরু করবে, যাতে আগের লেখা মুছে নতুন স্ক্রিনটা আসে
+        // ২০০ মিলি-সেকেন্ড পর সিগন্যাল পাঠাবে যাতে স্ক্রিন একদম ফ্রেশ থাকে
         mainHandler.postDelayed({
-            try {
-                val metrics = DisplayMetrics()
-                @Suppress("DEPRECATION")
-                windowManager.defaultDisplay.getRealMetrics(metrics)
-                val width = metrics.widthPixels
-                val height = metrics.heightPixels
-                val density = metrics.densityDpi
-
-                imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
-                virtualDisplay = mediaProjection?.createVirtualDisplay(
-                    "ScreenCapture",
-                    width, height, density,
-                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                    imageReader?.surface, null, null
-                )
-
-                var frameCaptured = false
-
-                imageReader?.setOnImageAvailableListener({ reader ->
-                    if (frameCaptured) return@setOnImageAvailableListener
-                    
-                    try {
-                        val image = reader.acquireLatestImage()
-                        if (image != null) {
-                            frameCaptured = true
-                            val bitmap = imageToBitmap(image)
-                            image.close()
-                            
-                            stopCapture() // ফ্রেম পাওয়া গেলেই ক্যাপচার বন্ধ করবে
-                            
-                            if (bitmap != null) {
-                                processBitmap(bitmap)
-                            } else {
-                                resetCapture()
-                            }
-                        }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                        resetCapture()
-                        stopCapture()
-                    }
-                }, mainHandler)
-            } catch (e: Exception) {
-                e.printStackTrace()
-                Toast.makeText(this, "স্ক্রিনশট এরর: ${e.message}", Toast.LENGTH_LONG).show()
-                resetCapture()
-            }
+            captureRequest = true
         }, 200)
     }
 
     private fun resetCapture() {
-        isCapturing = false
+        captureRequest = false
         stopLoadingAnimation()
     }
 
@@ -390,7 +384,9 @@ class ScreenTranslatorService : Service() {
             else
                 @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or // এই ম্যাজিক লাইনগুলো অরিজিনাল পজিশন ঠিক রাখবে
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         )
         windowManager.addView(container, containerParams)
@@ -400,18 +396,16 @@ class ScreenTranslatorService : Service() {
             val textView = TextView(this).apply {
                 text = translatedText
                 setTextColor(Color.WHITE)
-                setBackgroundColor(Color.parseColor("#E6000000"))
+                setBackgroundColor(Color.BLACK) // একদম কালো ব্যাকগ্রাউন্ড যাতে পেছনের লেখা ঢাকা পড়ে
                 gravity = Gravity.CENTER
-                setPadding(4, 4, 4, 4)
+                setPadding(0, 0, 0, 0)
                 
-                // অরিজিনাল সাইজ মেলানোর জন্য অটো-সাইজিং এবং ক্যালকুলেশন
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     setAutoSizeTextTypeUniformWithConfiguration(
                         10, 100, 1, TypedValue.COMPLEX_UNIT_SP
                     )
                 } else {
-                    val lineCount = translatedText.split("\n").size.coerceAtLeast(1)
-                    setTextSize(TypedValue.COMPLEX_UNIT_PX, (rect.height() / lineCount) * 0.7f)
+                    setTextSize(TypedValue.COMPLEX_UNIT_PX, rect.height() * 0.7f)
                 }
                 
                 layoutParams = FrameLayout.LayoutParams(rect.width(), rect.height()).apply {
@@ -433,7 +427,7 @@ class ScreenTranslatorService : Service() {
         currentOverlays.clear()
     }
 
-    private fun stopCapture() {
+    private fun releaseVirtualDisplay() {
         virtualDisplay?.release()
         virtualDisplay = null
         imageReader?.setOnImageAvailableListener(null, null)
@@ -472,7 +466,7 @@ class ScreenTranslatorService : Service() {
 
     fun stopServiceAndCleanup() {
         clearOverlays()
-        stopCapture()
+        releaseVirtualDisplay()
         try {
             floatingView?.let {
                 windowManager.removeView(it)
