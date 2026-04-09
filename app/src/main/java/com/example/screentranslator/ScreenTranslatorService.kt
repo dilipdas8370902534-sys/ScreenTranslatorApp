@@ -149,15 +149,14 @@ class ScreenTranslatorService : Service() {
                 imageReader?.surface, null, null
             )
             
-            // পাইপলাইন ক্লিয়ার রাখার জন্য হালকা ওজনের একটি পার্মানেন্ট লিসেনার
             imageReader?.setOnImageAvailableListener({ reader ->
                 try {
                     val image = reader.acquireLatestImage()
                     if (image != null) {
                         if (captureRequest) {
-                            captureRequest = false // রিকোয়েস্ট পূরণ হলো
+                            captureRequest = false
                             val bitmap = imageToBitmap(image)
-                            image.close() // সাথে সাথে মেমোরি ক্লিয়ার
+                            image.close()
                             
                             if (bitmap != null) {
                                 processBitmap(bitmap)
@@ -165,7 +164,7 @@ class ScreenTranslatorService : Service() {
                                 resetCapture()
                             }
                         } else {
-                            image.close() // রিকোয়েস্ট না থাকলে ছবিগুলো ফেলে দিয়ে পাইপলাইন ফাঁকা রাখবে
+                            image.close()
                         }
                     }
                 } catch (e: Exception) {
@@ -244,7 +243,7 @@ class ScreenTranslatorService : Service() {
                 }
                 MotionEvent.ACTION_UP -> {
                     if (!isMoved) {
-                        triggerCapture() // ট্যাপ করলেই অনুবাদ শুরু
+                        triggerCapture() 
                     }
                     true
                 }
@@ -283,10 +282,9 @@ class ScreenTranslatorService : Service() {
         }
         if (captureRequest) return 
         
-        clearOverlays() // আগের বাংলা লেখাগুলো সরিয়ে স্ক্রিন ফ্রেশ করবে
+        clearOverlays()
         startLoadingAnimation()
         
-        // ২০০ মিলি-সেকেন্ড পর সিগন্যাল দেবে, যাতে কোনো পুরনো লেখা ছবিতে না আসে
         mainHandler.postDelayed({
             captureRequest = true
         }, 200)
@@ -375,6 +373,16 @@ class ScreenTranslatorService : Service() {
         }
     }
 
+    // স্ট্যাটাস বারের উচ্চতা মাপার জাদুকরী ফাংশন
+    private fun getStatusBarHeight(): Int {
+        var result = 0
+        val resourceId = resources.getIdentifier("status_bar_height", "dimen", "android")
+        if (resourceId > 0) {
+            result = resources.getDimensionPixelSize(resourceId)
+        }
+        return result
+    }
+
     private fun showOverlays(blocks: List<Pair<Rect, String>>) {
         clearOverlays()
 
@@ -386,7 +394,6 @@ class ScreenTranslatorService : Service() {
             }
         }
         
-        // FLAG_LAYOUT_NO_LIMITS এর জাদুতে লেখাগুলো একদম সঠিক (অরিজিনাল) পজিশনে বসবে
         val containerParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -395,23 +402,20 @@ class ScreenTranslatorService : Service() {
             else
                 @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL, // ম্যাজিক: লেআউট লিমিট তুলে নেওয়া হয়েছে
             PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = 0
-            y = 0
-        }
+        )
         windowManager.addView(container, containerParams)
         fullscreenOverlayContainer = container
+
+        // স্ট্যাটাস বারের মাপ নেওয়া হলো
+        val statusBarOffset = getStatusBarHeight()
 
         for ((rect, translatedText) in blocks) {
             val textView = TextView(this).apply {
                 text = translatedText
                 setTextColor(Color.WHITE)
-                setBackgroundColor(Color.parseColor("#E6000000")) // হাল্কা কালো ব্যাকগ্রাউন্ড
+                setBackgroundColor(Color.parseColor("#E6000000")) 
                 gravity = Gravity.CENTER
                 setPadding(0, 0, 0, 0)
                 
@@ -423,8 +427,11 @@ class ScreenTranslatorService : Service() {
                     setTextSize(TypedValue.COMPLEX_UNIT_PX, rect.height() * 0.7f)
                 }
                 
+                // ম্যাজিক: অরিজিনাল পজিশন থেকে স্ট্যাটাস বারের মাপটা মাইনাস করে দেওয়া হলো
+                val finalY = if (rect.top - statusBarOffset < 0) 0 else rect.top - statusBarOffset
+                
                 layoutParams = FrameLayout.LayoutParams(rect.width(), rect.height()).apply {
-                    setMargins(rect.left, rect.top, 0, 0)
+                    setMargins(rect.left, finalY, 0, 0)
                 }
             }
             container.addView(textView)
