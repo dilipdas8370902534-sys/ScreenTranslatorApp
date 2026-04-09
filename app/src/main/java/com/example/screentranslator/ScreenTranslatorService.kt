@@ -53,7 +53,7 @@ class ScreenTranslatorService : Service() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val backgroundScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    private var captureRequest = false // আনলিমিটেড ট্যাপের জন্য ম্যাজিক সুইচ
+    private var isProcessing = false
     private val currentOverlays = mutableListOf<TextView>()
 
     companion object {
@@ -106,7 +106,6 @@ class ScreenTranslatorService : Service() {
                 mediaProjection = projectionManager.getMediaProjection(resultCode, dataIntent)
                 mediaProjection?.registerCallback(projectionCallback, mainHandler)
                 
-                // একবারই ডিসপ্লে রেডি করা হলো, যাতে আর ক্র্যাশ না করে
                 setupVirtualDisplay()
             }
         }
@@ -136,7 +135,7 @@ class ScreenTranslatorService : Service() {
         try {
             val metrics = DisplayMetrics()
             @Suppress("DEPRECATION")
-            windowManager.defaultDisplay.getRealMetrics(metrics) // একদম নিখুঁত মাপের জন্য
+            windowManager.defaultDisplay.getRealMetrics(metrics)
             val width = metrics.widthPixels
             val height = metrics.heightPixels
             val density = metrics.densityDpi
@@ -148,25 +147,9 @@ class ScreenTranslatorService : Service() {
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                 imageReader?.surface, null, null
             )
-
-            imageReader?.setOnImageAvailableListener({ reader ->
-                val image = reader.acquireLatestImage()
-                if (image != null) {
-                    if (captureRequest) {
-                        captureRequest = false
-                        val bitmap = imageToBitmap(image)
-                        if (bitmap != null) {
-                            processBitmap(bitmap)
-                        } else {
-                            resetCapture()
-                        }
-                    }
-                    image.close() // মেমোরি বাঁচানো
-                }
-            }, mainHandler)
+            // এখানে কোনো Listener সেট করা হলো না, তাই মেমোরি একদম ফাঁকা থাকবে
         } catch (e: Exception) {
             e.printStackTrace()
-            Toast.makeText(this, "ডিসপ্লে রেডি করতে এরর: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -235,7 +218,7 @@ class ScreenTranslatorService : Service() {
                 }
                 MotionEvent.ACTION_UP -> {
                     if (!isMoved) {
-                        triggerCapture() // যতবার ট্যাপ ততবার কাজ করবে
+                        triggerCapture()
                     }
                     true
                 }
@@ -268,23 +251,52 @@ class ScreenTranslatorService : Service() {
     }
 
     private fun triggerCapture() {
-        if (mediaProjection == null || virtualDisplay == null) {
-            Toast.makeText(this, "স্ক্রিন রেকর্ড পারমিশন নেই!", Toast.LENGTH_SHORT).show()
+        if (mediaProjection == null || virtualDisplay == null || imageReader == null) {
+            Toast.makeText(this, "স্ক্রিন রেকর্ড রেডি নেই!", Toast.LENGTH_SHORT).show()
             return
         }
-        if (captureRequest) return // আগেরটা চলতে থাকলে অপেক্ষা করবে
+        if (isProcessing) return 
         
-        clearOverlays() // আগের লেখা মুছে দেবে
+        isProcessing = true
+        clearOverlays()
         startLoadingAnimation()
         
-        // ২০০ মিলি-সেকেন্ড পর সিগন্যাল পাঠাবে যাতে স্ক্রিন একদম ফ্রেশ থাকে
+        // ২৫০ মিলি-সেকেন্ড পর স্ক্যান শুরু করবে, যাতে আগের লেখা মুছে স্ক্রিন ফ্রেশ হয়
         mainHandler.postDelayed({
-            captureRequest = true
-        }, 200)
+            try {
+                // শুধুমাত্র প্রয়োজনের সময় একটিমাত্র ফ্রেম নেওয়ার জন্য Listener চালু করা হলো
+                imageReader?.setOnImageAvailableListener({ reader ->
+                    // ছবি পাওয়া মাত্রই Listener বন্ধ করে দেওয়া হলো, যাতে ফোন স্পিড না কমে
+                    imageReader?.setOnImageAvailableListener(null, null)
+                    
+                    try {
+                        val image = reader.acquireLatestImage()
+                        if (image != null) {
+                            val bitmap = imageToBitmap(image)
+                            image.close()
+                            
+                            if (bitmap != null) {
+                                processBitmap(bitmap)
+                            } else {
+                                resetCapture()
+                            }
+                        } else {
+                            resetCapture()
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        resetCapture()
+                    }
+                }, mainHandler)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                resetCapture()
+            }
+        }, 250)
     }
 
     private fun resetCapture() {
-        captureRequest = false
+        isProcessing = false
         stopLoadingAnimation()
     }
 
@@ -385,10 +397,15 @@ class ScreenTranslatorService : Service() {
                 @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or // এই ম্যাজিক লাইনগুলো অরিজিনাল পজিশন ঠিক রাখবে
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
-        )
+        ).apply {
+            // এই দুই লাইনের কারণেই লেখা একদম সঠিক জায়গায় (ওপর থেকে) শুরু হবে
+            gravity = Gravity.TOP or Gravity.START
+            x = 0
+            y = 0
+        }
         windowManager.addView(container, containerParams)
         fullscreenOverlayContainer = container
 
@@ -396,7 +413,7 @@ class ScreenTranslatorService : Service() {
             val textView = TextView(this).apply {
                 text = translatedText
                 setTextColor(Color.WHITE)
-                setBackgroundColor(Color.BLACK) // একদম কালো ব্যাকগ্রাউন্ড যাতে পেছনের লেখা ঢাকা পড়ে
+                setBackgroundColor(Color.parseColor("#E6000000")) // হাল্কা কালো
                 gravity = Gravity.CENTER
                 setPadding(0, 0, 0, 0)
                 
