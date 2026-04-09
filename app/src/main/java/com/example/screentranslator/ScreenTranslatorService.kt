@@ -61,7 +61,6 @@ class ScreenTranslatorService : Service() {
         private const val CHANNEL_ID = "screen_translator_channel"
     }
 
-    // Android 14 এর জন্য এই Callback টি খুব জরুরি
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
             super.onStop()
@@ -105,8 +104,6 @@ class ScreenTranslatorService : Service() {
             if (resultCode == Activity.RESULT_OK && dataIntent != null && mediaProjection == null) {
                 val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                 mediaProjection = projectionManager.getMediaProjection(resultCode, dataIntent)
-                
-                // এই লাইনটিই সেই ম্যাজিক যা Android 14 এ পারমিশন এরর দূর করবে
                 mediaProjection?.registerCallback(projectionCallback, mainHandler)
             }
         }
@@ -197,6 +194,7 @@ class ScreenTranslatorService : Service() {
                 }
                 MotionEvent.ACTION_UP -> {
                     if (!isMoved) {
+                        clearOverlays() // আগের অনুবাদ মুছে স্ক্রিন রিফ্রেশ করবে
                         startScreenCapture()
                     }
                     true
@@ -239,46 +237,56 @@ class ScreenTranslatorService : Service() {
         isCapturing = true
         startLoadingAnimation()
         
-        try {
-            val metrics = DisplayMetrics()
-            @Suppress("DEPRECATION")
-            windowManager.defaultDisplay.getRealMetrics(metrics)
-            val width = metrics.widthPixels
-            val height = metrics.heightPixels
-            val density = metrics.densityDpi
+        // ২০০ মিলি-সেকেন্ড পর স্ক্যান শুরু করবে, যাতে আগের লেখা মুছে নতুন স্ক্রিনটা আসে
+        mainHandler.postDelayed({
+            try {
+                val metrics = DisplayMetrics()
+                @Suppress("DEPRECATION")
+                windowManager.defaultDisplay.getRealMetrics(metrics)
+                val width = metrics.widthPixels
+                val height = metrics.heightPixels
+                val density = metrics.densityDpi
 
-            imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
-            virtualDisplay = mediaProjection?.createVirtualDisplay(
-                "ScreenCapture",
-                width, height, density,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                imageReader?.surface, null, null
-            )
+                imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+                virtualDisplay = mediaProjection?.createVirtualDisplay(
+                    "ScreenCapture",
+                    width, height, density,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    imageReader?.surface, null, null
+                )
 
-            imageReader?.setOnImageAvailableListener({ reader ->
-                try {
-                    val image = reader.acquireLatestImage()
-                    if (image != null) {
-                        val bitmap = imageToBitmap(image)
-                        image.close()
-                        if (bitmap != null) {
-                            processBitmap(bitmap)
-                        } else {
-                            resetCapture()
+                var frameCaptured = false
+
+                imageReader?.setOnImageAvailableListener({ reader ->
+                    if (frameCaptured) return@setOnImageAvailableListener
+                    
+                    try {
+                        val image = reader.acquireLatestImage()
+                        if (image != null) {
+                            frameCaptured = true
+                            val bitmap = imageToBitmap(image)
+                            image.close()
+                            
+                            stopCapture() // ফ্রেম পাওয়া গেলেই ক্যাপচার বন্ধ করবে
+                            
+                            if (bitmap != null) {
+                                processBitmap(bitmap)
+                            } else {
+                                resetCapture()
+                            }
                         }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        resetCapture()
+                        stopCapture()
                     }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    resetCapture()
-                } finally {
-                    stopCapture()
-                }
-            }, mainHandler)
-        } catch (e: Exception) {
-            e.printStackTrace()
-            Toast.makeText(this, "স্ক্রিনশট এরর: ${e.message}", Toast.LENGTH_LONG).show()
-            resetCapture()
-        }
+                }, mainHandler)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                Toast.makeText(this, "স্ক্রিনশট এরর: ${e.message}", Toast.LENGTH_LONG).show()
+                resetCapture()
+            }
+        }, 200)
     }
 
     private fun resetCapture() {
@@ -392,46 +400,27 @@ class ScreenTranslatorService : Service() {
             val textView = TextView(this).apply {
                 text = translatedText
                 setTextColor(Color.WHITE)
-                setBackgroundColor(Color.parseColor("#CC000000"))
+                setBackgroundColor(Color.parseColor("#E6000000"))
                 gravity = Gravity.CENTER
-                setPadding(12, 12, 12, 12)
-                val width = rect.width()
-                val height = rect.height()
-                if (width <= 0 || height <= 0) return@apply
-                layoutParams = FrameLayout.LayoutParams(width, height).apply {
+                setPadding(4, 4, 4, 4)
+                
+                // অরিজিনাল সাইজ মেলানোর জন্য অটো-সাইজিং এবং ক্যালকুলেশন
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    setAutoSizeTextTypeUniformWithConfiguration(
+                        10, 100, 1, TypedValue.COMPLEX_UNIT_SP
+                    )
+                } else {
+                    val lineCount = translatedText.split("\n").size.coerceAtLeast(1)
+                    setTextSize(TypedValue.COMPLEX_UNIT_PX, (rect.height() / lineCount) * 0.7f)
+                }
+                
+                layoutParams = FrameLayout.LayoutParams(rect.width(), rect.height()).apply {
                     setMargins(rect.left, rect.top, 0, 0)
                 }
-                fitTextToBounds(this, translatedText, width, height)
             }
             container.addView(textView)
             currentOverlays.add(textView)
         }
-    }
-
-    private fun fitTextToBounds(textView: TextView, text: String, maxWidth: Int, maxHeight: Int) {
-        textView.text = text
-        textView.measure(
-            View.MeasureSpec.makeMeasureSpec(maxWidth, View.MeasureSpec.AT_MOST),
-            View.MeasureSpec.makeMeasureSpec(maxHeight, View.MeasureSpec.AT_MOST)
-        )
-        var textSize = 50f
-        val minSize = 10f
-        var bestSize = minSize
-
-        while (textSize >= minSize) {
-            textView.setTextSize(TypedValue.COMPLEX_UNIT_SP, textSize)
-            textView.measure(
-                View.MeasureSpec.makeMeasureSpec(maxWidth, View.MeasureSpec.EXACTLY),
-                View.MeasureSpec.makeMeasureSpec(maxHeight, View.MeasureSpec.EXACTLY)
-            )
-            if (textView.measuredHeight <= maxHeight && textView.measuredWidth <= maxWidth) {
-                bestSize = textSize
-                break
-            }
-            textSize -= 2f
-        }
-        textView.setTextSize(TypedValue.COMPLEX_UNIT_SP, bestSize)
-        textView.requestLayout()
     }
 
     private fun clearOverlays() {
@@ -447,6 +436,7 @@ class ScreenTranslatorService : Service() {
     private fun stopCapture() {
         virtualDisplay?.release()
         virtualDisplay = null
+        imageReader?.setOnImageAvailableListener(null, null)
         imageReader?.close()
         imageReader = null
     }
