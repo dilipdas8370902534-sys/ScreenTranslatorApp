@@ -30,7 +30,11 @@ import com.google.mlkit.nl.translate.Translator
 import com.google.mlkit.nl.translate.TranslatorOptions
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
+import com.google.mlkit.vision.text.devanagari.DevanagariTextRecognizerOptions
+import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
 
 import kotlinx.coroutines.*
 import kotlin.math.abs
@@ -48,7 +52,7 @@ class ScreenTranslatorService : Service() {
     private var sourceLangCode = "en"
     private var targetLangCode = "bn"
     private var translator: Translator? = null
-    private val textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+    private var textRecognizer: TextRecognizer? = null
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val backgroundScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -92,7 +96,7 @@ class ScreenTranslatorService : Service() {
         intent?.let {
             sourceLangCode = it.getStringExtra("SOURCE_LANG") ?: "en"
             targetLangCode = it.getStringExtra("TARGET_LANG") ?: "bn"
-            setupTranslator()
+            setupTranslatorAndScanner()
 
             val resultCode = it.getIntExtra("RESULT_CODE", Activity.RESULT_CANCELED)
             val dataIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -120,7 +124,8 @@ class ScreenTranslatorService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun setupTranslator() {
+    private fun setupTranslatorAndScanner() {
+        // Translation Setup
         val sourceLang = TranslateLanguage.fromLanguageTag(sourceLangCode)
         val targetLang = TranslateLanguage.fromLanguageTag(targetLangCode)
         if (sourceLang != null && targetLang != null) {
@@ -130,6 +135,15 @@ class ScreenTranslatorService : Service() {
                 .build()
             translator = Translation.getClient(options)
         }
+
+        // Scanner Setup (সঠিক ভাষার চশমা পরানো হচ্ছে)
+        val recognizerOptions = when (sourceLangCode) {
+            "zh" -> ChineseTextRecognizerOptions.Builder().build()
+            "hi" -> DevanagariTextRecognizerOptions.Builder().build()
+            "ja" -> JapaneseTextRecognizerOptions.Builder().build()
+            else -> TextRecognizerOptions.DEFAULT_OPTIONS
+        }
+        textRecognizer = TextRecognition.getClient(recognizerOptions)
     }
 
     private fun setupVirtualDisplay() {
@@ -322,10 +336,15 @@ class ScreenTranslatorService : Service() {
     }
 
     private fun processBitmap(bitmap: Bitmap) {
+        if (textRecognizer == null) {
+            resetCapture()
+            return
+        }
+        
         try {
             val inputImage = InputImage.fromBitmap(bitmap, 0)
-            textRecognizer.process(inputImage)
-                .addOnSuccessListener { text ->
+            textRecognizer?.process(inputImage)
+                ?.addOnSuccessListener { text ->
                     val textBlocks = text.textBlocks
                     if (textBlocks.isEmpty()) {
                         Toast.makeText(this, "স্ক্রিনে কোনো লেখা পাওয়া যায়নি!", Toast.LENGTH_SHORT).show()
@@ -352,7 +371,7 @@ class ScreenTranslatorService : Service() {
                         }
                     }
                 }
-                .addOnFailureListener { e ->
+                ?.addOnFailureListener { e ->
                     Toast.makeText(this, "স্ক্যান ফেইল: ${e.message}", Toast.LENGTH_SHORT).show()
                     bitmap.recycle()
                     resetCapture()
@@ -373,7 +392,6 @@ class ScreenTranslatorService : Service() {
         }
     }
 
-    // স্ট্যাটাস বারের উচ্চতা মাপার জাদুকরী ফাংশন
     private fun getStatusBarHeight(): Int {
         var result = 0
         val resourceId = resources.getIdentifier("status_bar_height", "dimen", "android")
@@ -402,13 +420,12 @@ class ScreenTranslatorService : Service() {
             else
                 @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL, // ম্যাজিক: লেআউট লিমিট তুলে নেওয়া হয়েছে
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL, 
             PixelFormat.TRANSLUCENT
         )
         windowManager.addView(container, containerParams)
         fullscreenOverlayContainer = container
 
-        // স্ট্যাটাস বারের মাপ নেওয়া হলো
         val statusBarOffset = getStatusBarHeight()
 
         for ((rect, translatedText) in blocks) {
@@ -427,7 +444,6 @@ class ScreenTranslatorService : Service() {
                     setTextSize(TypedValue.COMPLEX_UNIT_PX, rect.height() * 0.7f)
                 }
                 
-                // ম্যাজিক: অরিজিনাল পজিশন থেকে স্ট্যাটাস বারের মাপটা মাইনাস করে দেওয়া হলো
                 val finalY = if (rect.top - statusBarOffset < 0) 0 else rect.top - statusBarOffset
                 
                 layoutParams = FrameLayout.LayoutParams(rect.width(), rect.height()).apply {
