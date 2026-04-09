@@ -2,12 +2,16 @@ package com.example.screentranslator
 
 import android.app.Activity
 import android.content.Intent
+import android.graphics.Color
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.ArrayAdapter
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -65,7 +69,8 @@ class MainActivity : AppCompatActivity() {
         mediaProjectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
 
         setupLanguageSpinners()
-        setupButtons()
+        setupLanguageList()
+        setupToggle()
     }
 
     private fun setupLanguageSpinners() {
@@ -79,14 +84,65 @@ class MainActivity : AppCompatActivity() {
         binding.spinnerTarget.setSelection(1)
     }
 
-    private fun setupButtons() {
-        binding.btnDownload.setOnClickListener {
-            val sourceCode = supportedLanguages[binding.spinnerSource.selectedItemPosition].first
-            val targetCode = supportedLanguages[binding.spinnerTarget.selectedItemPosition].first
-            downloadModel(sourceCode)
-            downloadModel(targetCode)
-        }
+    private fun setupLanguageList() {
+        binding.languageContainer.removeAllViews()
 
+        supportedLanguages.forEach { (code, name) ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { setMargins(0, 8, 0, 8) }
+                gravity = android.view.Gravity.CENTER_VERTICAL
+            }
+
+            val nameText = TextView(this).apply {
+                text = name
+                textSize = 16f
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            }
+
+            val btnDownload = Button(this).apply {
+                text = "⬇️ Download"
+                setBackgroundColor(Color.parseColor("#4CAF50"))
+                setTextColor(Color.WHITE)
+                setOnClickListener { downloadModel(code, name) }
+            }
+
+            val btnDelete = Button(this).apply {
+                text = "🗑️"
+                setBackgroundColor(Color.parseColor("#F44336"))
+                setTextColor(Color.WHITE)
+                setOnClickListener { deleteModel(code, name) }
+            }
+
+            row.addView(nameText)
+            row.addView(btnDownload)
+            row.addView(btnDelete)
+            binding.languageContainer.addView(row)
+        }
+    }
+
+    private fun downloadModel(langCode: String, langName: String) {
+        val language = TranslateLanguage.fromLanguageTag(langCode) ?: return
+        val modelManager = RemoteModelManager.getInstance()
+        val model = TranslateRemoteModel.Builder(language).build()
+        Toast.makeText(this, "$langName ডাউনলোড হচ্ছে...", Toast.LENGTH_SHORT).show()
+        modelManager.download(model, DownloadConditions.Builder().build())
+            .addOnSuccessListener { Toast.makeText(this, "$langName ডাউনলোড সফল!", Toast.LENGTH_SHORT).show() }
+            .addOnFailureListener { Toast.makeText(this, "$langName ডাউনলোড ফেইল!", Toast.LENGTH_SHORT).show() }
+    }
+
+    private fun deleteModel(langCode: String, langName: String) {
+        val language = TranslateLanguage.fromLanguageTag(langCode) ?: return
+        val modelManager = RemoteModelManager.getInstance()
+        val model = TranslateRemoteModel.Builder(language).build()
+        modelManager.deleteDownloadedModel(model)
+            .addOnSuccessListener { Toast.makeText(this, "$langName ডিলিট করা হয়েছে!", Toast.LENGTH_SHORT).show() }
+    }
+
+    private fun setupToggle() {
         binding.toggleStartStop.setOnCheckedChangeListener { _, isChecked ->
             if (isChecked) {
                 if (!Settings.canDrawOverlays(this)) {
@@ -96,19 +152,10 @@ class MainActivity : AppCompatActivity() {
                     startScreenCapture()
                 }
             } else {
-                stopTranslationService()
+                val intent = Intent(this, ScreenTranslatorService::class.java)
+                stopService(intent)
             }
         }
-    }
-
-    private fun downloadModel(langCode: String) {
-        val language = TranslateLanguage.fromLanguageTag(langCode) ?: return
-        val modelManager = RemoteModelManager.getInstance()
-        val model = TranslateRemoteModel.Builder(language).build()
-        Toast.makeText(this, "$langCode ভাষা ডাউনলোড হচ্ছে...", Toast.LENGTH_SHORT).show()
-        modelManager.download(model, DownloadConditions.Builder().build())
-            .addOnSuccessListener { Toast.makeText(this, "$langCode ডাউনলোড সফল হয়েছে!", Toast.LENGTH_SHORT).show() }
-            .addOnFailureListener { Toast.makeText(this, "$langCode ডাউনলোড ফেইল হয়েছে!", Toast.LENGTH_SHORT).show() }
     }
 
     private fun startScreenCapture() {
@@ -133,10 +180,5 @@ class MainActivity : AppCompatActivity() {
         } else {
             startService(serviceIntent)
         }
-    }
-
-    private fun stopTranslationService() {
-        val intent = Intent(this, ScreenTranslatorService::class.java)
-        stopService(intent)
     }
 }
