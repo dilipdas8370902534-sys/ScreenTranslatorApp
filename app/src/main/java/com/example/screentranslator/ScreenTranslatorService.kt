@@ -150,17 +150,24 @@ class ScreenTranslatorService : Service() {
         textRecognizer = TextRecognition.getClient(recognizerOptions)
     }
 
-    // পার্সেন্টেজ দেখানোর ভিউ তৈরি করা (ডান কোণায়)
+    // পার্সেন্টেজ ভিউ একদম স্ক্রিনের মাঝখানে বসানোর ম্যাজিক
     private fun showProgressIndicator() {
         if (progressTextView != null) return
 
+        val shape = GradientDrawable().apply {
+            setColor(Color.parseColor("#CC000000")) // গাঢ় কালো ব্যাকগ্রাউন্ড
+            cornerRadius = 30f // গোল বর্ডার
+        }
+
         progressTextView = TextView(this).apply {
-            text = ""
-            setTextColor(Color.YELLOW)
-            setBackgroundColor(Color.parseColor("#80000000"))
-            setPadding(20, 10, 20, 10)
-            textSize = 12f
+            text = "অনুবাদ হচ্ছে..."
+            setTextColor(Color.WHITE)
+            background = shape
+            setPadding(50, 30, 50, 30)
+            textSize = 16f
+            gravity = Gravity.CENTER
             visibility = View.GONE
+            elevation = 20f
         }
 
         progressParams = WindowManager.LayoutParams(
@@ -170,12 +177,10 @@ class ScreenTranslatorService : Service() {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else
                 @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.TOP or Gravity.END
-            x = 20
-            y = 100 // স্ট্যাটাস বারের ঠিক নিচে
+            gravity = Gravity.CENTER // স্ক্রিনের একদম মাঝখানে
         }
 
         windowManager.addView(progressTextView, progressParams)
@@ -297,7 +302,7 @@ class ScreenTranslatorService : Service() {
     private fun resetCapture() {
         captureRequest = false
         stopLoadingAnimation()
-        updateProgress(0)
+        updateProgress(0) // পার্সেন্টেজ লুকিয়ে ফেলবে
     }
 
     private fun imageToBitmap(image: android.media.Image): Bitmap? {
@@ -320,15 +325,18 @@ class ScreenTranslatorService : Service() {
                 ?.addOnSuccessListener { text ->
                     val blocks = text.textBlocks
                     if (blocks.isEmpty()) {
+                        mainHandler.post { Toast.makeText(this, "স্ক্রিনে কোনো লেখা পাওয়া যায়নি!", Toast.LENGTH_SHORT).show() }
                         resetCapture()
                         return@addOnSuccessListener
                     }
-                    updateProgress(50) // ৫০% স্ক্যান শেষ
+                    updateProgress(50) // ৫০% স্ক্যান শেষ, এবার AI এর কাজ শুরু
                     backgroundScope.launch {
                         val translatedBlocks = mutableListOf<Pair<Rect, String>>()
                         blocks.forEachIndexed { index, block ->
                             val translated = translateWithAI(block.text)
-                            if (translated != null) translatedBlocks.add((block.boundingBox!!) to translated)
+                            if (translated != null && translated.isNotEmpty() && !translated.contains("API Error")) {
+                                translatedBlocks.add((block.boundingBox!!) to translated)
+                            }
                             
                             // পার্সেন্টেজ আপডেট (৫০ থেকে ৯০ এর মধ্যে)
                             val p = 50 + ((index + 1) * 40 / blocks.size)
@@ -336,7 +344,7 @@ class ScreenTranslatorService : Service() {
                         }
                         withContext(Dispatchers.Main) {
                             showOverlays(translatedBlocks)
-                            updateProgress(100) // শেষ
+                            updateProgress(100) // ১০০% শেষ, লেখা গায়েব হবে
                             bitmap.recycle(); resetCapture()
                         }
                     }
@@ -350,7 +358,7 @@ class ScreenTranslatorService : Service() {
             val jsonBody = JSONObject().apply {
                 put("model", modelName)
                 put("messages", JSONArray().apply {
-                    put(JSONObject().apply { put("role", "user"); put("content", "Translate to natural Bengali: $text") })
+                    put(JSONObject().apply { put("role", "user"); put("content", "Translate the following text to natural Bengali, do not include quotes:\n\n$text") })
                 })
             }
             val request = Request.Builder().url(apiUrl).addHeader("Authorization", "Bearer $apiKey")
@@ -358,7 +366,7 @@ class ScreenTranslatorService : Service() {
             val response = okHttpClient.newCall(request).execute()
             val body = response.body?.string()
             if (response.isSuccessful && body != null) {
-                JSONObject(body).getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content")
+                JSONObject(body).getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content").trim().removeSurrounding("\"")
             } else null
         } catch (e: Exception) { null }
     }
