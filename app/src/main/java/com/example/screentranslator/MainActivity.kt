@@ -2,27 +2,19 @@ package com.example.screentranslator
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Context
 import android.content.Intent
-import android.graphics.Color
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.ArrayAdapter
-import android.widget.Button
-import android.widget.LinearLayout
-import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.example.screentranslator.databinding.ActivityMainBinding
-
-import com.google.mlkit.common.model.DownloadConditions
-import com.google.mlkit.common.model.RemoteModelManager
-import com.google.mlkit.nl.translate.TranslateLanguage
-import com.google.mlkit.nl.translate.TranslateRemoteModel
 
 class MainActivity : AppCompatActivity() {
 
@@ -30,15 +22,10 @@ class MainActivity : AppCompatActivity() {
     private var mediaProjectionManager: MediaProjectionManager? = null
 
     private val supportedLanguages = listOf(
-        "en" to "English",
-        "bn" to "Bengali",
-        "hi" to "Hindi",
+        "en" to "English (or Any Latin)",
+        "hi" to "Hindi (Devanagari)",
         "zh" to "Chinese",
-        "es" to "Spanish",
-        "fr" to "French",
-        "ja" to "Japanese",
-        "ru" to "Russian",
-        "ar" to "Arabic"
+        "ja" to "Japanese"
     )
 
     private val overlayPermissionLauncher = registerForActivityResult(
@@ -71,8 +58,8 @@ class MainActivity : AppCompatActivity() {
         mediaProjectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
 
         setupLanguageSpinners()
-        setupLanguageList()
-        setupToggle()
+        loadAiSettings()
+        setupButtons()
         setupExitDialog()
     }
 
@@ -81,71 +68,27 @@ class MainActivity : AppCompatActivity() {
         val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, languageNames)
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         binding.spinnerSource.adapter = adapter
-        binding.spinnerTarget.adapter = adapter
-
-        binding.spinnerSource.setSelection(0)
-        binding.spinnerTarget.setSelection(1)
     }
 
-    private fun setupLanguageList() {
-        binding.languageContainer.removeAllViews()
+    private fun loadAiSettings() {
+        val sharedPref = getSharedPreferences("AiSettings", Context.MODE_PRIVATE)
+        binding.etApiUrl.setText(sharedPref.getString("apiUrl", ""))
+        binding.etModelName.setText(sharedPref.getString("modelName", ""))
+        binding.etApiKey.setText(sharedPref.getString("apiKey", ""))
+    }
 
-        supportedLanguages.forEach { (code, name) ->
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { setMargins(0, 8, 0, 8) }
-                gravity = android.view.Gravity.CENTER_VERTICAL
+    private fun setupButtons() {
+        binding.btnSaveConfig.setOnClickListener {
+            val sharedPref = getSharedPreferences("AiSettings", Context.MODE_PRIVATE)
+            with(sharedPref.edit()) {
+                putString("apiUrl", binding.etApiUrl.text.toString().trim())
+                putString("modelName", binding.etModelName.text.toString().trim())
+                putString("apiKey", binding.etApiKey.text.toString().trim())
+                apply()
             }
-
-            val nameText = TextView(this).apply {
-                text = name
-                textSize = 16f
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            }
-
-            val btnDownload = Button(this).apply {
-                text = "⬇️ Download"
-                setBackgroundColor(Color.parseColor("#4CAF50"))
-                setTextColor(Color.WHITE)
-                setOnClickListener { downloadModel(code, name) }
-            }
-
-            val btnDelete = Button(this).apply {
-                text = "🗑️"
-                setBackgroundColor(Color.parseColor("#F44336"))
-                setTextColor(Color.WHITE)
-                setOnClickListener { deleteModel(code, name) }
-            }
-
-            row.addView(nameText)
-            row.addView(btnDownload)
-            row.addView(btnDelete)
-            binding.languageContainer.addView(row)
+            Toast.makeText(this, "AI Settings Saved!", Toast.LENGTH_SHORT).show()
         }
-    }
 
-    private fun downloadModel(langCode: String, langName: String) {
-        val language = TranslateLanguage.fromLanguageTag(langCode) ?: return
-        val modelManager = RemoteModelManager.getInstance()
-        val model = TranslateRemoteModel.Builder(language).build()
-        Toast.makeText(this, "$langName ডাউনলোড হচ্ছে...", Toast.LENGTH_SHORT).show()
-        modelManager.download(model, DownloadConditions.Builder().build())
-            .addOnSuccessListener { Toast.makeText(this, "$langName ডাউনলোড সফল!", Toast.LENGTH_SHORT).show() }
-            .addOnFailureListener { Toast.makeText(this, "$langName ডাউনলোড ফেইল!", Toast.LENGTH_SHORT).show() }
-    }
-
-    private fun deleteModel(langCode: String, langName: String) {
-        val language = TranslateLanguage.fromLanguageTag(langCode) ?: return
-        val modelManager = RemoteModelManager.getInstance()
-        val model = TranslateRemoteModel.Builder(language).build()
-        modelManager.deleteDownloadedModel(model)
-            .addOnSuccessListener { Toast.makeText(this, "$langName ডিলিট করা হয়েছে!", Toast.LENGTH_SHORT).show() }
-    }
-
-    private fun setupToggle() {
         binding.toggleStartStop.setOnCheckedChangeListener { _, isChecked ->
             if (isChecked) {
                 if (!Settings.canDrawOverlays(this)) {
@@ -155,13 +98,19 @@ class MainActivity : AppCompatActivity() {
                     startScreenCapture()
                 }
             } else {
-                val intent = Intent(this, ScreenTranslatorService::class.java)
-                stopService(intent)
+                stopService(Intent(this, ScreenTranslatorService::class.java))
             }
         }
     }
 
     private fun startScreenCapture() {
+        val sharedPref = getSharedPreferences("AiSettings", Context.MODE_PRIVATE)
+        if (sharedPref.getString("apiKey", "").isNullOrEmpty()) {
+            Toast.makeText(this, "আগে API Key সেভ করুন!", Toast.LENGTH_LONG).show()
+            binding.toggleStartStop.isChecked = false
+            return
+        }
+
         val intent = mediaProjectionManager?.createScreenCaptureIntent()
         if (intent != null) {
             screenCaptureLauncher.launch(intent)
@@ -170,11 +119,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun startServiceAndFloatingIcon(resultCode: Int, data: Intent) {
         val sourceCode = supportedLanguages[binding.spinnerSource.selectedItemPosition].first
-        val targetCode = supportedLanguages[binding.spinnerTarget.selectedItemPosition].first
 
         val serviceIntent = Intent(this, ScreenTranslatorService::class.java).apply {
             putExtra("SOURCE_LANG", sourceCode)
-            putExtra("TARGET_LANG", targetCode)
             putExtra("RESULT_CODE", resultCode)
             putExtra("DATA_INTENT", data)
         }
@@ -185,7 +132,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ব্যাক বাটনে ক্লিক করলে Exit অপশন দেখানোর ফাংশন
     private fun setupExitDialog() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -193,13 +139,10 @@ class MainActivity : AppCompatActivity() {
                     .setTitle("অ্যাপ বন্ধ করবেন?")
                     .setMessage("আপনি কি অ্যাপটি পুরোপুরি বন্ধ করতে চান? 'Exit' করলে ব্যাকগ্রাউন্ড সার্ভিস বন্ধ হয়ে RAM ও ব্যাটারি বাঁচবে।")
                     .setPositiveButton("Exit") { _, _ ->
-                        // সার্ভিস পুরোপুরি বন্ধ করে RAM ক্লিয়ার করবে
-                        val intent = Intent(this@MainActivity, ScreenTranslatorService::class.java)
-                        stopService(intent)
+                        stopService(Intent(this@MainActivity, ScreenTranslatorService::class.java))
                         finishAffinity() 
                     }
                     .setNegativeButton("Non Exit") { _, _ ->
-                        // সার্ভিস চালু রেখে শুধু মিনিমাইজ করবে
                         moveTaskToBack(true)
                     }
                     .setCancelable(true)
