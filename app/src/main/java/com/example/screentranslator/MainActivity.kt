@@ -21,11 +21,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private var mediaProjectionManager: MediaProjectionManager? = null
 
+    // গুগল স্ক্যানার যে ভাষাগুলো অফলাইনে সাপোর্ট করে
     private val supportedLanguages = listOf(
-        "en" to "English (or Any Latin)",
-        "hi" to "Hindi (Devanagari)",
-        "zh" to "Chinese",
-        "ja" to "Japanese"
+        "en" to "English (Latin Script)",
+        "zh" to "Chinese (চাইনিজ)",
+        "hi" to "Hindi (হিন্দি)",
+        "ja" to "Japanese (জাপানিজ)",
+        "ko" to "Korean (কোরিয়ান)"
     )
 
     private val overlayPermissionLauncher = registerForActivityResult(
@@ -57,13 +59,13 @@ class MainActivity : AppCompatActivity() {
 
         mediaProjectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
 
-        setupLanguageSpinners()
+        setupLanguageSpinner()
         loadAiSettings()
         setupButtons()
         setupExitDialog()
     }
 
-    private fun setupLanguageSpinners() {
+    private fun setupLanguageSpinner() {
         val languageNames = supportedLanguages.map { it.second }
         val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, languageNames)
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
@@ -137,7 +139,7 @@ class MainActivity : AppCompatActivity() {
             override fun handleOnBackPressed() {
                 AlertDialog.Builder(this@MainActivity)
                     .setTitle("অ্যাপ বন্ধ করবেন?")
-                    .setMessage("আপনি কি অ্যাপটি পুরোপুরি বন্ধ করতে চান? 'Exit' করলে ব্যাকগ্রাউন্ড সার্ভিস বন্ধ হয়ে RAM ও ব্যাটারি বাঁচবে।")
+                    .setMessage("আপনি কি অ্যাপটি পুরোপুরি বন্ধ করতে চান?")
                     .setPositiveButton("Exit") { _, _ ->
                         stopService(Intent(this@MainActivity, ScreenTranslatorService::class.java))
                         finishAffinity() 
