@@ -38,13 +38,13 @@ dependencies {
     implementation("com.google.android.material:material:1.11.0")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
 
-    // ML Kit Libraries (Translate and OCR)
-    implementation("com.google.mlkit:translate:17.0.2")
+    // ML Kit OCR (শুধুমাত্র লেখা পড়ার জন্য)
     implementation("com.google.mlkit:text-recognition:16.0.0")
     implementation("com.google.mlkit:text-recognition-chinese:16.0.0")
     implementation("com.google.mlkit:text-recognition-devanagari:16.0.0")
     implementation("com.google.mlkit:text-recognition-japanese:16.0.0")
 
-    // Coroutines for background tasks
+    // ইন্টারনেট এবং API কলের জন্য OkHttp
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }
