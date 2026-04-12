@@ -16,6 +16,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.DisplayMetrics
+import android.util.TypedValue
 import android.view.*
 import android.view.animation.Animation
 import android.view.animation.LinearInterpolator
@@ -48,7 +49,6 @@ class ScreenTranslatorService : Service() {
     private var floatingView: ImageView? = null
     private var floatingParams: WindowManager.LayoutParams? = null
     
-    // "অনুবাদ করা হচ্ছে..." দেখানোর ভিউ
     private var loadingTextView: TextView? = null
     private var loadingParams: WindowManager.LayoutParams? = null
 
@@ -335,13 +335,19 @@ class ScreenTranslatorService : Service() {
                     }
                     
                     backgroundScope.launch {
-                        val translatedBlocks = mutableListOf<Pair<Rect, String>>()
-                        blocks.forEach { block ->
-                            val translated = translateWithAI(block.text)
-                            if (!translated.isNullOrEmpty() && !translated.contains("API Error")) {
-                                translatedBlocks.add((block.boundingBox!!) to translated)
+                        // ম্যাজিক স্পিড: একসাথে সবগুলো ব্লকের অনুবাদ শুরু হবে (Concurrent API Calls)
+                        val deferredBlocks = blocks.map { block ->
+                            async(Dispatchers.IO) {
+                                val translated = translateWithAI(block.text)
+                                if (!translated.isNullOrEmpty() && !translated.contains("API Error")) {
+                                    Pair(block.boundingBox!!, translated)
+                                } else null
                             }
                         }
+                        
+                        // সবগুলো অনুবাদ শেষ হওয়া পর্যন্ত একসাথে অপেক্ষা করবে (১০ গুণ স্পিড বাড়বে)
+                        val translatedBlocks = deferredBlocks.awaitAll().filterNotNull()
+                        
                         withContext(Dispatchers.Main) {
                             showOverlays(translatedBlocks)
                             bitmap.recycle(); resetCapture()
@@ -392,6 +398,7 @@ class ScreenTranslatorService : Service() {
         fullscreenOverlayContainer = container
         
         val statusBarOffset = getStatusBarHeight()
+        val displayMetrics = resources.displayMetrics
 
         for ((rect, translatedText) in blocks) {
             val textView = TextView(this).apply {
@@ -399,15 +406,21 @@ class ScreenTranslatorService : Service() {
                 setTextColor(Color.WHITE)
                 setBackgroundColor(Color.parseColor("#E6000000")) 
                 gravity = Gravity.START or Gravity.CENTER_VERTICAL
-                setPadding(6, 6, 6, 6) // চারপাশের ফাঁকা জায়গা (Padding) একদম কমিয়ে দেওয়া হলো
-                textSize = 12f // সাইজ 15 থেকে কমিয়ে 12 করা হলো
+                
+                // লেখা এবং প্যাডিং আরও কমানো হলো যাতে জোড়া না লাগে
+                setPadding(2, 2, 2, 2) 
+                textSize = 10f // সাইজ আগের থেকে আরও ছোট (১০) করা হলো
                 
                 val finalY = if (rect.top - statusBarOffset < 0) 0 else rect.top - statusBarOffset
                 
-                // বক্সের চওড়া অরিজিনাল মাপে রাখা হলো, আর উচ্চতা (Height) লেখা অনুযায়ী বাড়বে
-                layoutParams = FrameLayout.LayoutParams(rect.width(), FrameLayout.LayoutParams.WRAP_CONTENT).apply {
+                // চাইনিজ লেখার বক্স খুব ছোট হয়, তাই বাংলার জন্য বক্সটি ডানে-বামে একটু জায়গা নেবে
+                val boxWidth = if (rect.width() < 100) FrameLayout.LayoutParams.WRAP_CONTENT else rect.width()
+
+                layoutParams = FrameLayout.LayoutParams(boxWidth, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
                     setMargins(rect.left, finalY, 0, 0)
                 }
+                
+                maxWidth = displayMetrics.widthPixels - rect.left - 10 
             }
             container.addView(textView)
             currentOverlays.add(textView)
