@@ -49,9 +49,9 @@ class ScreenTranslatorService : Service() {
     private var floatingView: ImageView? = null
     private var floatingParams: WindowManager.LayoutParams? = null
     
-    // পার্সেন্টেজ ভিউ
-    private var progressTextView: TextView? = null
-    private var progressParams: WindowManager.LayoutParams? = null
+    // "অনুবাদ করা হচ্ছে..." দেখানোর ভিউ
+    private var loadingTextView: TextView? = null
+    private var loadingParams: WindowManager.LayoutParams? = null
 
     private var fullscreenOverlayContainer: FrameLayout? = null
     private var mediaProjection: MediaProjection? = null
@@ -125,13 +125,22 @@ class ScreenTranslatorService : Service() {
             if (resultCode == Activity.RESULT_OK && dataIntent != null && mediaProjection == null) {
                 val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                 mediaProjection = projectionManager.getMediaProjection(resultCode, dataIntent)
+                
+                // Android 14 Callback
+                mediaProjection?.registerCallback(object : MediaProjection.Callback() {
+                    override fun onStop() {
+                        super.onStop()
+                        releaseVirtualDisplay()
+                    }
+                }, mainHandler)
+                
                 setupVirtualDisplay()
             }
         }
 
         if (mediaProjection != null) {
             showFloatingIcon()
-            showProgressIndicator()
+            showLoadingIndicator()
         } else {
             stopSelf()
         }
@@ -150,17 +159,17 @@ class ScreenTranslatorService : Service() {
         textRecognizer = TextRecognition.getClient(recognizerOptions)
     }
 
-    // পার্সেন্টেজ ভিউ একদম স্ক্রিনের মাঝখানে বসানোর ম্যাজিক
-    private fun showProgressIndicator() {
-        if (progressTextView != null) return
+    // "অনুবাদ করা হচ্ছে..." টেক্সট স্ক্রিনের মাঝখানে বসানো
+    private fun showLoadingIndicator() {
+        if (loadingTextView != null) return
 
         val shape = GradientDrawable().apply {
-            setColor(Color.parseColor("#CC000000")) // গাঢ় কালো ব্যাকগ্রাউন্ড
-            cornerRadius = 30f // গোল বর্ডার
+            setColor(Color.parseColor("#CC000000")) 
+            cornerRadius = 30f 
         }
 
-        progressTextView = TextView(this).apply {
-            text = "অনুবাদ হচ্ছে..."
+        loadingTextView = TextView(this).apply {
+            text = "অনুবাদ করা হচ্ছে..."
             setTextColor(Color.WHITE)
             background = shape
             setPadding(50, 30, 50, 30)
@@ -170,7 +179,7 @@ class ScreenTranslatorService : Service() {
             elevation = 20f
         }
 
-        progressParams = WindowManager.LayoutParams(
+        loadingParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
@@ -180,22 +189,15 @@ class ScreenTranslatorService : Service() {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.CENTER // স্ক্রিনের একদম মাঝখানে
+            gravity = Gravity.CENTER 
         }
 
-        windowManager.addView(progressTextView, progressParams)
+        windowManager.addView(loadingTextView, loadingParams)
     }
 
-    private fun updateProgress(percent: Int) {
+    private fun showLoadingText(show: Boolean) {
         mainHandler.post {
-            progressTextView?.apply {
-                if (percent in 1..99) {
-                    visibility = View.VISIBLE
-                    text = "অনুবাদ হচ্ছে... $percent%"
-                } else {
-                    visibility = View.GONE
-                }
-            }
+            loadingTextView?.visibility = if (show) View.VISIBLE else View.GONE
         }
     }
 
@@ -211,16 +213,20 @@ class ScreenTranslatorService : Service() {
             )
             
             imageReader?.setOnImageAvailableListener({ reader ->
-                val image = reader.acquireLatestImage()
-                if (image != null) {
-                    if (captureRequest) {
-                        captureRequest = false
-                        val bitmap = imageToBitmap(image)
-                        image.close()
-                        if (bitmap != null) processBitmap(bitmap) else resetCapture()
-                    } else {
-                        image.close()
+                try {
+                    val image = reader.acquireLatestImage()
+                    if (image != null) {
+                        if (captureRequest) {
+                            captureRequest = false
+                            val bitmap = imageToBitmap(image)
+                            image.close()
+                            if (bitmap != null) processBitmap(bitmap) else resetCapture()
+                        } else {
+                            image.close()
+                        }
                     }
+                } catch (e: Exception) {
+                    e.printStackTrace()
                 }
             }, mainHandler)
         } catch (e: Exception) { }
@@ -242,7 +248,7 @@ class ScreenTranslatorService : Service() {
         windowManager.defaultDisplay.getMetrics(metrics)
 
         floatingParams = WindowManager.LayoutParams(
-            90, 90,
+            180, 180, // আইকন আবার আগের মতো বড় (১৮০) করা হলো
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
@@ -284,7 +290,7 @@ class ScreenTranslatorService : Service() {
         if (captureRequest) return 
         clearOverlays()
         startLoadingAnimation()
-        updateProgress(10) // ১০% শুরু
+        showLoadingText(true) // ট্যাপ করলেই লেখাটি আসবে
         mainHandler.postDelayed({ captureRequest = true }, 200)
     }
 
@@ -302,58 +308,56 @@ class ScreenTranslatorService : Service() {
     private fun resetCapture() {
         captureRequest = false
         stopLoadingAnimation()
-        updateProgress(0) // পার্সেন্টেজ লুকিয়ে ফেলবে
+        showLoadingText(false) // কাজ শেষ হলে লেখাটি চলে যাবে
     }
 
     private fun imageToBitmap(image: android.media.Image): Bitmap? {
-        val planes = image.planes
-        val buffer = planes[0].buffer
-        val pixelStride = planes[0].pixelStride
-        val rowStride = planes[0].rowStride
-        val rowPadding = rowStride - pixelStride * image.width
-        val bitmap = Bitmap.createBitmap(image.width + rowPadding / pixelStride, image.height, Bitmap.Config.ARGB_8888)
-        buffer.rewind(); bitmap.copyPixelsFromBuffer(buffer)
-        val cropped = Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height)
-        if (bitmap != cropped) bitmap.recycle()
-        return cropped
+        return try {
+            val planes = image.planes
+            val buffer = planes[0].buffer
+            val pixelStride = planes[0].pixelStride
+            val rowStride = planes[0].rowStride
+            val rowPadding = rowStride - pixelStride * image.width
+            val bitmap = Bitmap.createBitmap(image.width + rowPadding / pixelStride, image.height, Bitmap.Config.ARGB_8888)
+            buffer.rewind(); bitmap.copyPixelsFromBuffer(buffer)
+            val cropped = Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height)
+            if (bitmap != cropped) bitmap.recycle()
+            cropped
+        } catch (e: Exception) { null }
     }
 
     private fun processBitmap(bitmap: Bitmap) {
-        updateProgress(30) // ৩০% স্ক্যানিং শুরু
         try {
             textRecognizer?.process(InputImage.fromBitmap(bitmap, 0))
                 ?.addOnSuccessListener { text ->
                     val blocks = text.textBlocks
                     if (blocks.isEmpty()) {
                         mainHandler.post { Toast.makeText(this, "স্ক্রিনে কোনো লেখা পাওয়া যায়নি!", Toast.LENGTH_SHORT).show() }
-                        resetCapture()
+                        bitmap.recycle(); resetCapture()
                         return@addOnSuccessListener
                     }
-                    updateProgress(50) // ৫০% স্ক্যান শেষ, এবার AI এর কাজ শুরু
+                    
                     backgroundScope.launch {
                         val translatedBlocks = mutableListOf<Pair<Rect, String>>()
-                        blocks.forEachIndexed { index, block ->
+                        blocks.forEach { block ->
                             val translated = translateWithAI(block.text)
-                            if (translated != null && translated.isNotEmpty() && !translated.contains("API Error")) {
+                            if (!translated.isNullOrEmpty() && !translated.contains("API Error")) {
                                 translatedBlocks.add((block.boundingBox!!) to translated)
                             }
-                            
-                            // পার্সেন্টেজ আপডেট (৫০ থেকে ৯০ এর মধ্যে)
-                            val p = 50 + ((index + 1) * 40 / blocks.size)
-                            updateProgress(p)
                         }
                         withContext(Dispatchers.Main) {
                             showOverlays(translatedBlocks)
-                            updateProgress(100) // ১০০% শেষ, লেখা গায়েব হবে
                             bitmap.recycle(); resetCapture()
                         }
                     }
                 }
-                ?.addOnFailureListener { resetCapture() }
-        } catch (e: Exception) { resetCapture() }
+                ?.addOnFailureListener { bitmap.recycle(); resetCapture() }
+        } catch (e: Exception) { bitmap.recycle(); resetCapture() }
     }
 
     private suspend fun translateWithAI(text: String): String? = withContext(Dispatchers.IO) {
+        if (apiKey.isEmpty() || apiUrl.isEmpty() || modelName.isEmpty()) return@withContext "API Config Missing"
+
         try {
             val jsonBody = JSONObject().apply {
                 put("model", modelName)
@@ -371,6 +375,13 @@ class ScreenTranslatorService : Service() {
         } catch (e: Exception) { null }
     }
 
+    private fun getStatusBarHeight(): Int {
+        var result = 0
+        val resourceId = resources.getIdentifier("status_bar_height", "dimen", "android")
+        if (resourceId > 0) result = resources.getDimensionPixelSize(resourceId)
+        return result
+    }
+
     private fun showOverlays(blocks: List<Pair<Rect, String>>) {
         clearOverlays()
         val container = FrameLayout(this).apply { setBackgroundColor(Color.TRANSPARENT); setOnTouchListener { _, _ -> clearOverlays(); true } }
@@ -382,32 +393,45 @@ class ScreenTranslatorService : Service() {
         )
         windowManager.addView(container, params)
         fullscreenOverlayContainer = container
-        val statusBar = resources.getDimensionPixelSize(resources.getIdentifier("status_bar_height", "dimen", "android"))
+        
+        val statusBarOffset = getStatusBarHeight()
+        val displayMetrics = resources.displayMetrics
 
-        blocks.forEach { (rect, text) ->
-            val tv = TextView(this).apply {
-                this.text = text; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#E6000000"))
-                gravity = Gravity.CENTER; setPadding(0, 0, 0, 0)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) setAutoSizeTextTypeUniformWithConfiguration(8, 100, 1, TypedValue.COMPLEX_UNIT_SP)
-                layoutParams = FrameLayout.LayoutParams(rect.width(), rect.height()).apply { setMargins(rect.left, rect.top - statusBar, 0, 0) }
+        for ((rect, translatedText) in blocks) {
+            val textView = TextView(this).apply {
+                text = translatedText
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.parseColor("#E6000000")) 
+                gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                setPadding(12, 12, 12, 12)
+                textSize = 15f // ফিক্সড পড়ার মতো সাইজ দেওয়া হলো
+                
+                val finalY = if (rect.top - statusBarOffset < 0) 0 else rect.top - statusBarOffset
+                
+                // বক্সটি যাতে ছোট না হয়ে যায়, তার জন্য একটি নির্দিষ্ট মাপ রাখা হলো
+                val boxWidth = if (rect.width() > 150) rect.width() else FrameLayout.LayoutParams.WRAP_CONTENT
+
+                layoutParams = FrameLayout.LayoutParams(boxWidth, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
+                    setMargins(rect.left, finalY, 0, 0)
+                }
+                
+                // লেখাটি যেন স্ক্রিনের বাইরে চলে না যায়, তার জন্য লিমিট
+                maxWidth = displayMetrics.widthPixels - rect.left - 10 
             }
-            container.addView(tv)
+            container.addView(textView)
+            currentOverlays.add(textView)
         }
     }
 
     private fun clearOverlays() {
         fullscreenOverlayContainer?.let { try { windowManager.removeView(it) } catch (e: Exception) { } }
         fullscreenOverlayContainer = null
+        currentOverlays.clear()
     }
 
-    private fun stopServiceAndCleanup() {
-        clearOverlays()
-        try { 
-            floatingView?.let { windowManager.removeView(it) }
-            progressTextView?.let { windowManager.removeView(it) }
-        } catch (e: Exception) { }
-        floatingView = null; progressTextView = null
-        mediaProjection?.stop(); stopSelf()
+    private fun releaseVirtualDisplay() {
+        virtualDisplay?.release(); virtualDisplay = null
+        imageReader?.setOnImageAvailableListener(null, null); imageReader?.close(); imageReader = null
     }
 
     private fun createNotificationChannel() {
@@ -419,6 +443,16 @@ class ScreenTranslatorService : Service() {
 
     private fun buildNotification(): Notification = NotificationCompat.Builder(this, CHANNEL_ID)
         .setContentTitle("Screen Translator").setSmallIcon(android.R.drawable.ic_menu_camera).setOngoing(true).build()
+
+    fun stopServiceAndCleanup() {
+        clearOverlays(); releaseVirtualDisplay()
+        try { 
+            floatingView?.let { windowManager.removeView(it) }
+            loadingTextView?.let { windowManager.removeView(it) }
+        } catch (e: Exception) { }
+        floatingView = null; loadingTextView = null
+        mediaProjection?.stop(); stopSelf()
+    }
 
     override fun onDestroy() { super.onDestroy(); backgroundScope.cancel(); stopServiceAndCleanup() }
 }
