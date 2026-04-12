@@ -16,7 +16,6 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.DisplayMetrics
-import android.util.TypedValue
 import android.view.*
 import android.view.animation.Animation
 import android.view.animation.LinearInterpolator
@@ -126,7 +125,6 @@ class ScreenTranslatorService : Service() {
                 val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                 mediaProjection = projectionManager.getMediaProjection(resultCode, dataIntent)
                 
-                // Android 14 Callback
                 mediaProjection?.registerCallback(object : MediaProjection.Callback() {
                     override fun onStop() {
                         super.onStop()
@@ -159,7 +157,6 @@ class ScreenTranslatorService : Service() {
         textRecognizer = TextRecognition.getClient(recognizerOptions)
     }
 
-    // "অনুবাদ করা হচ্ছে..." টেক্সট স্ক্রিনের মাঝখানে বসানো
     private fun showLoadingIndicator() {
         if (loadingTextView != null) return
 
@@ -248,7 +245,7 @@ class ScreenTranslatorService : Service() {
         windowManager.defaultDisplay.getMetrics(metrics)
 
         floatingParams = WindowManager.LayoutParams(
-            180, 180, // আইকন আবার আগের মতো বড় (১৮০) করা হলো
+            180, 180,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
@@ -290,7 +287,7 @@ class ScreenTranslatorService : Service() {
         if (captureRequest) return 
         clearOverlays()
         startLoadingAnimation()
-        showLoadingText(true) // ট্যাপ করলেই লেখাটি আসবে
+        showLoadingText(true)
         mainHandler.postDelayed({ captureRequest = true }, 200)
     }
 
@@ -308,7 +305,7 @@ class ScreenTranslatorService : Service() {
     private fun resetCapture() {
         captureRequest = false
         stopLoadingAnimation()
-        showLoadingText(false) // কাজ শেষ হলে লেখাটি চলে যাবে
+        showLoadingText(false) 
     }
 
     private fun imageToBitmap(image: android.media.Image): Bitmap? {
@@ -395,7 +392,6 @@ class ScreenTranslatorService : Service() {
         fullscreenOverlayContainer = container
         
         val statusBarOffset = getStatusBarHeight()
-        val displayMetrics = resources.displayMetrics
 
         for ((rect, translatedText) in blocks) {
             val textView = TextView(this).apply {
@@ -403,20 +399,15 @@ class ScreenTranslatorService : Service() {
                 setTextColor(Color.WHITE)
                 setBackgroundColor(Color.parseColor("#E6000000")) 
                 gravity = Gravity.START or Gravity.CENTER_VERTICAL
-                setPadding(12, 12, 12, 12)
-                textSize = 15f // ফিক্সড পড়ার মতো সাইজ দেওয়া হলো
+                setPadding(6, 6, 6, 6) // চারপাশের ফাঁকা জায়গা (Padding) একদম কমিয়ে দেওয়া হলো
+                textSize = 12f // সাইজ 15 থেকে কমিয়ে 12 করা হলো
                 
                 val finalY = if (rect.top - statusBarOffset < 0) 0 else rect.top - statusBarOffset
                 
-                // বক্সটি যাতে ছোট না হয়ে যায়, তার জন্য একটি নির্দিষ্ট মাপ রাখা হলো
-                val boxWidth = if (rect.width() > 150) rect.width() else FrameLayout.LayoutParams.WRAP_CONTENT
-
-                layoutParams = FrameLayout.LayoutParams(boxWidth, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
+                // বক্সের চওড়া অরিজিনাল মাপে রাখা হলো, আর উচ্চতা (Height) লেখা অনুযায়ী বাড়বে
+                layoutParams = FrameLayout.LayoutParams(rect.width(), FrameLayout.LayoutParams.WRAP_CONTENT).apply {
                     setMargins(rect.left, finalY, 0, 0)
                 }
-                
-                // লেখাটি যেন স্ক্রিনের বাইরে চলে না যায়, তার জন্য লিমিট
-                maxWidth = displayMetrics.widthPixels - rect.left - 10 
             }
             container.addView(textView)
             currentOverlays.add(textView)
