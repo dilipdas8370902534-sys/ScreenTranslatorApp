@@ -161,15 +161,15 @@ class ScreenTranslatorService : Service() {
         if (loadingTextView != null) return
 
         val shape = GradientDrawable().apply {
-            setColor(Color.parseColor("#CC000000")) 
-            cornerRadius = 30f 
+            setColor(Color.parseColor("#D9000000")) 
+            cornerRadius = 40f 
         }
 
         loadingTextView = TextView(this).apply {
             text = "অনুবাদ করা হচ্ছে..."
             setTextColor(Color.WHITE)
             background = shape
-            setPadding(50, 30, 50, 30)
+            setPadding(60, 30, 60, 30)
             textSize = 16f
             gravity = Gravity.CENTER
             visibility = View.GONE
@@ -335,17 +335,16 @@ class ScreenTranslatorService : Service() {
                     }
                     
                     backgroundScope.launch {
-                        // ম্যাজিক স্পিড: একসাথে সবগুলো ব্লকের অনুবাদ শুরু হবে (Concurrent API Calls)
                         val deferredBlocks = blocks.map { block ->
                             async(Dispatchers.IO) {
-                                val translated = translateWithAI(block.text)
+                                val cleanText = block.text.replace("\n", " ") 
+                                val translated = translateWithAI(cleanText)
                                 if (!translated.isNullOrEmpty() && !translated.contains("API Error")) {
                                     Pair(block.boundingBox!!, translated)
                                 } else null
                             }
                         }
                         
-                        // সবগুলো অনুবাদ শেষ হওয়া পর্যন্ত একসাথে অপেক্ষা করবে (১০ গুণ স্পিড বাড়বে)
                         val translatedBlocks = deferredBlocks.awaitAll().filterNotNull()
                         
                         withContext(Dispatchers.Main) {
@@ -361,12 +360,16 @@ class ScreenTranslatorService : Service() {
     private suspend fun translateWithAI(text: String): String? = withContext(Dispatchers.IO) {
         if (apiKey.isEmpty() || apiUrl.isEmpty() || modelName.isEmpty()) return@withContext "API Config Missing"
 
+        // এআই-কে অত্যন্ত কড়া নির্দেশ দেওয়া হলো প্রাঞ্জল ও নিখুঁত অনুবাদের জন্য
+        val prompt = "You are an expert translator. Translate the following text into fluent and natural Bengali. Keep the translation concise to fit the original text layout. Return ONLY the translated text, without any explanations, quotes, or extra words. Text to translate:\n\n$text"
+
         try {
             val jsonBody = JSONObject().apply {
                 put("model", modelName)
                 put("messages", JSONArray().apply {
-                    put(JSONObject().apply { put("role", "user"); put("content", "Translate the following text to natural Bengali, do not include quotes:\n\n$text") })
+                    put(JSONObject().apply { put("role", "user"); put("content", prompt) })
                 })
+                put("temperature", 0.3)
             }
             val request = Request.Builder().url(apiUrl).addHeader("Authorization", "Bearer $apiKey")
                 .post(jsonBody.toString().toRequestBody("application/json".toMediaType())).build()
@@ -398,29 +401,40 @@ class ScreenTranslatorService : Service() {
         fullscreenOverlayContainer = container
         
         val statusBarOffset = getStatusBarHeight()
-        val displayMetrics = resources.displayMetrics
+
+        val bgShape = GradientDrawable().apply {
+            setColor(Color.parseColor("#E6121212")) // গাঢ় প্রিমিয়াম গ্রে কালার
+            cornerRadius = 8f 
+        }
 
         for ((rect, translatedText) in blocks) {
             val textView = TextView(this).apply {
                 text = translatedText
                 setTextColor(Color.WHITE)
-                setBackgroundColor(Color.parseColor("#E6000000")) 
-                gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                background = bgShape 
+                gravity = Gravity.CENTER // লেখা বক্সের একদম মাঝখানে থাকবে
                 
-                // লেখা এবং প্যাডিং আরও কমানো হলো যাতে জোড়া না লাগে
-                setPadding(2, 2, 2, 2) 
-                textSize = 10f // সাইজ আগের থেকে আরও ছোট (১০) করা হলো
+                // বক্সের ভেতরে লেখার জায়গা পাওয়ার জন্য প্যাডিং কমানো হলো
+                setPadding(4, 4, 4, 4) 
+                
+                // অটো-সাইজ ম্যাজিক: বক্সের সাইজ অনুযায়ী লেখা নিজে থেকে ছোট হয়ে ফিট হবে
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    setAutoSizeTextTypeUniformWithConfiguration(
+                        6, // সবচেয়ে ছোট সাইজ
+                        100, // সবচেয়ে বড় সাইজ
+                        1, 
+                        TypedValue.COMPLEX_UNIT_SP
+                    )
+                } else {
+                    textSize = 12f
+                }
                 
                 val finalY = if (rect.top - statusBarOffset < 0) 0 else rect.top - statusBarOffset
                 
-                // চাইনিজ লেখার বক্স খুব ছোট হয়, তাই বাংলার জন্য বক্সটি ডানে-বামে একটু জায়গা নেবে
-                val boxWidth = if (rect.width() < 100) FrameLayout.LayoutParams.WRAP_CONTENT else rect.width()
-
-                layoutParams = FrameLayout.LayoutParams(boxWidth, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
+                // বক্সের উচ্চতা এবং চওড়া একদম অরিজিনাল লেখার মাপে (ফিক্সড) করে দেওয়া হলো
+                layoutParams = FrameLayout.LayoutParams(rect.width(), rect.height()).apply {
                     setMargins(rect.left, finalY, 0, 0)
                 }
-                
-                maxWidth = displayMetrics.widthPixels - rect.left - 10 
             }
             container.addView(textView)
             currentOverlays.add(textView)
