@@ -338,7 +338,6 @@ class ScreenTranslatorService : Service() {
                             async(Dispatchers.IO) {
                                 val cleanText = block.text.replace("\n", " ") 
                                 val translated = translateWithAI(cleanText)
-                                // AI এরর মেসেজ বা ফাঁকা টেক্সট ফিল্টার করে দেওয়া হচ্ছে
                                 if (!translated.isNullOrEmpty() && !translated.contains("API Error")) {
                                     Pair(block.boundingBox!!, translated)
                                 } else null
@@ -360,7 +359,6 @@ class ScreenTranslatorService : Service() {
     private suspend fun translateWithAI(text: String): String? = withContext(Dispatchers.IO) {
         if (apiKey.isEmpty() || apiUrl.isEmpty() || modelName.isEmpty()) return@withContext "API Config Missing"
 
-        // AI-কে কড়া নির্দেশ: কোনো পণ্ডিতি করা যাবে না!
         val prompt = "You are an expert translator. Translate the text into fluent Bengali. If the text is a username, a fragment, a symbol, or incomplete, translate or transliterate it as best as you can. NEVER return warnings, notes, or ask for more context. Return ONLY the translated Bengali text without quotes:\n\n$text"
 
         try {
@@ -369,7 +367,7 @@ class ScreenTranslatorService : Service() {
                 put("messages", JSONArray().apply {
                     put(JSONObject().apply { put("role", "user"); put("content", prompt) })
                 })
-                put("temperature", 0.1) // টেম্পারেচার কমানো হলো যাতে AI নিজের থেকে কিছু না বানায়
+                put("temperature", 0.1)
             }
             val request = Request.Builder().url(apiUrl).addHeader("Authorization", "Bearer $apiKey")
                 .post(jsonBody.toString().toRequestBody("application/json".toMediaType())).build()
@@ -404,7 +402,7 @@ class ScreenTranslatorService : Service() {
         val displayMetrics = resources.displayMetrics
 
         val bgShape = GradientDrawable().apply {
-            setColor(Color.parseColor("#E6121212")) // গাঢ় প্রিমিয়াম গ্রে কালার
+            setColor(Color.parseColor("#E6121212")) 
             cornerRadius = 8f 
         }
 
@@ -416,17 +414,13 @@ class ScreenTranslatorService : Service() {
                 gravity = Gravity.CENTER_VERTICAL
                 
                 setPadding(10, 6, 10, 6) 
-                
-                // অটো-সাইজ বন্ধ করে ফিক্সড পড়ার মতো সাইজ (১৩) করে দেওয়া হলো
                 textSize = 13f 
                 
                 val finalY = if (rect.top - statusBarOffset < 0) 0 else rect.top - statusBarOffset
                 
-                // চাইনিজ লেখার বক্স খুব ছোট হয়, তাই পড়ার সুবিধার জন্য বক্সের চওড়া (Width) ন্যূনতম ১৫০ রাখা হলো
                 val minBoxWidth = 150
                 val boxWidth = if (rect.width() < minBoxWidth) minBoxWidth else rect.width()
 
-                // উচ্চতা (Height) WRAP_CONTENT করা হলো, যাতে বাংলা লেখা কেটে না যায় বা ছোট না হয়
                 layoutParams = FrameLayout.LayoutParams(boxWidth, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
                     setMargins(rect.left, finalY, 0, 0)
                 }
@@ -469,4 +463,5 @@ class ScreenTranslatorService : Service() {
         mediaProjection?.stop(); stopSelf()
     }
 
-    override fun onDestroy() { super.onDestroy(); backg
+    override fun onDestroy() { super.onDestroy(); backgroundScope.cancel(); stopServiceAndCleanup() }
+}
