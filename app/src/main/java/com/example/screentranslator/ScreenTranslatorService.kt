@@ -16,7 +16,6 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.DisplayMetrics
-import android.util.TypedValue
 import android.view.*
 import android.view.animation.Animation
 import android.view.animation.LinearInterpolator
@@ -339,6 +338,7 @@ class ScreenTranslatorService : Service() {
                             async(Dispatchers.IO) {
                                 val cleanText = block.text.replace("\n", " ") 
                                 val translated = translateWithAI(cleanText)
+                                // AI এরর মেসেজ বা ফাঁকা টেক্সট ফিল্টার করে দেওয়া হচ্ছে
                                 if (!translated.isNullOrEmpty() && !translated.contains("API Error")) {
                                     Pair(block.boundingBox!!, translated)
                                 } else null
@@ -360,8 +360,8 @@ class ScreenTranslatorService : Service() {
     private suspend fun translateWithAI(text: String): String? = withContext(Dispatchers.IO) {
         if (apiKey.isEmpty() || apiUrl.isEmpty() || modelName.isEmpty()) return@withContext "API Config Missing"
 
-        // এআই-কে অত্যন্ত কড়া নির্দেশ দেওয়া হলো প্রাঞ্জল ও নিখুঁত অনুবাদের জন্য
-        val prompt = "You are an expert translator. Translate the following text into fluent and natural Bengali. Keep the translation concise to fit the original text layout. Return ONLY the translated text, without any explanations, quotes, or extra words. Text to translate:\n\n$text"
+        // AI-কে কড়া নির্দেশ: কোনো পণ্ডিতি করা যাবে না!
+        val prompt = "You are an expert translator. Translate the text into fluent Bengali. If the text is a username, a fragment, a symbol, or incomplete, translate or transliterate it as best as you can. NEVER return warnings, notes, or ask for more context. Return ONLY the translated Bengali text without quotes:\n\n$text"
 
         try {
             val jsonBody = JSONObject().apply {
@@ -369,7 +369,7 @@ class ScreenTranslatorService : Service() {
                 put("messages", JSONArray().apply {
                     put(JSONObject().apply { put("role", "user"); put("content", prompt) })
                 })
-                put("temperature", 0.3)
+                put("temperature", 0.1) // টেম্পারেচার কমানো হলো যাতে AI নিজের থেকে কিছু না বানায়
             }
             val request = Request.Builder().url(apiUrl).addHeader("Authorization", "Bearer $apiKey")
                 .post(jsonBody.toString().toRequestBody("application/json".toMediaType())).build()
@@ -401,6 +401,7 @@ class ScreenTranslatorService : Service() {
         fullscreenOverlayContainer = container
         
         val statusBarOffset = getStatusBarHeight()
+        val displayMetrics = resources.displayMetrics
 
         val bgShape = GradientDrawable().apply {
             setColor(Color.parseColor("#E6121212")) // গাঢ় প্রিমিয়াম গ্রে কালার
@@ -412,29 +413,25 @@ class ScreenTranslatorService : Service() {
                 text = translatedText
                 setTextColor(Color.WHITE)
                 background = bgShape 
-                gravity = Gravity.CENTER // লেখা বক্সের একদম মাঝখানে থাকবে
+                gravity = Gravity.CENTER_VERTICAL
                 
-                // বক্সের ভেতরে লেখার জায়গা পাওয়ার জন্য প্যাডিং কমানো হলো
-                setPadding(4, 4, 4, 4) 
+                setPadding(10, 6, 10, 6) 
                 
-                // অটো-সাইজ ম্যাজিক: বক্সের সাইজ অনুযায়ী লেখা নিজে থেকে ছোট হয়ে ফিট হবে
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    setAutoSizeTextTypeUniformWithConfiguration(
-                        6, // সবচেয়ে ছোট সাইজ
-                        100, // সবচেয়ে বড় সাইজ
-                        1, 
-                        TypedValue.COMPLEX_UNIT_SP
-                    )
-                } else {
-                    textSize = 12f
-                }
+                // অটো-সাইজ বন্ধ করে ফিক্সড পড়ার মতো সাইজ (১৩) করে দেওয়া হলো
+                textSize = 13f 
                 
                 val finalY = if (rect.top - statusBarOffset < 0) 0 else rect.top - statusBarOffset
                 
-                // বক্সের উচ্চতা এবং চওড়া একদম অরিজিনাল লেখার মাপে (ফিক্সড) করে দেওয়া হলো
-                layoutParams = FrameLayout.LayoutParams(rect.width(), rect.height()).apply {
+                // চাইনিজ লেখার বক্স খুব ছোট হয়, তাই পড়ার সুবিধার জন্য বক্সের চওড়া (Width) ন্যূনতম ১৫০ রাখা হলো
+                val minBoxWidth = 150
+                val boxWidth = if (rect.width() < minBoxWidth) minBoxWidth else rect.width()
+
+                // উচ্চতা (Height) WRAP_CONTENT করা হলো, যাতে বাংলা লেখা কেটে না যায় বা ছোট না হয়
+                layoutParams = FrameLayout.LayoutParams(boxWidth, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
                     setMargins(rect.left, finalY, 0, 0)
                 }
+                
+                maxWidth = displayMetrics.widthPixels - rect.left - 20 
             }
             container.addView(textView)
             currentOverlays.add(textView)
@@ -472,5 +469,4 @@ class ScreenTranslatorService : Service() {
         mediaProjection?.stop(); stopSelf()
     }
 
-    override fun onDestroy() { super.onDestroy(); backgroundScope.cancel(); stopServiceAndCleanup() }
-}
+    override fun onDestroy() { super.onDestroy(); backg
